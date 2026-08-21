@@ -5,15 +5,8 @@ import GLib from 'gi://GLib';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 
-const POLL_INTERVAL_MS = 300;
-const TOUCH_EVENT_TYPES = new Set([
-    Clutter.EventType.TOUCH_BEGIN,
-    Clutter.EventType.TOUCH_UPDATE,
-    Clutter.EventType.TOUCH_END,
-]);
 const POINTER_PRESS_TYPES = new Set([
     Clutter.EventType.BUTTON_PRESS,
-    Clutter.EventType.TOUCH_BEGIN,
 ]);
 const PASSWORD_PURPOSE = Clutter.InputContentPurpose.PASSWORD;
 
@@ -77,7 +70,7 @@ export default class OskFixExtension extends Extension {
         Main.keyboard.maybeHandleEvent = (event) => this._maybeHandleEvent(event);
 
         this._pollId = GLib.timeout_add(
-            GLib.PRIORITY_DEFAULT, POLL_INTERVAL_MS, () => {
+            GLib.PRIORITY_DEFAULT, 300, () => {
                 this._poll();
                 return GLib.SOURCE_CONTINUE;
             });
@@ -110,10 +103,7 @@ export default class OskFixExtension extends Extension {
         const actor = global.stage.get_event_actor(event);
         if (!actor || !this._actorIsText(actor)) return false;
 
-        const evType = event.type();
-        const shouldOpen = TOUCH_EVENT_TYPES.has(evType);
-
-        if (!shouldOpen) return false;
+        if (event.type() !== Clutter.EventType.BUTTON_PRESS) return false;
 
         if (this._isPasswordFocused()) return false;
 
@@ -147,7 +137,6 @@ export default class OskFixExtension extends Extension {
         this._prevVisible = visible;
         const requested = !!(kbd && kbd._keyboardRequested);
 
-        // Track focus CHANGE like native does
         const focusChanged = this._prevInputFocus !== null && this._prevInputFocus !== focus;
         if (focusChanged) {
             this._prevInputFocus = null;
@@ -159,7 +148,6 @@ export default class OskFixExtension extends Extension {
                 this._prevInputFocus = focus;
             }
 
-            // Only auto-open on NEW focus (mimics native _onKeyFocusChanged behavior)
             if (!visible && !requested && isNewFocus && !this._userHidden && !this._hideButtonPressed) {
                 if (this._isPasswordFocused()) return;
                 Main.keyboard.open(Main.layoutManager.focusIndex);
