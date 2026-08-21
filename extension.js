@@ -86,6 +86,7 @@ export default class NativeOSKAutoShowWrap extends Extension {
                     this._prevKeyFocusActor = focusActor;
                 });
         } catch (e) {
+            console.error('[osk-fix] Failed to connect key-focus signal:', e);
         }
 
         this._oldMaybeHandleEvent = Main.keyboard.maybeHandleEvent;
@@ -153,7 +154,9 @@ export default class NativeOSKAutoShowWrap extends Extension {
         if (this._keyFocusHandlerId) {
             try {
                 global.stage.disconnect(this._keyFocusHandlerId);
-            } catch (e) {}
+            } catch (e) {
+                console.error('[osk-fix] Failed to disconnect key-focus signal:', e);
+            }
             this._keyFocusHandlerId = 0;
         }
 
@@ -203,6 +206,7 @@ export default class NativeOSKAutoShowWrap extends Extension {
             try {
                 focused = !!focus.is_focused();
             } catch (e) {
+                console.error('[osk-fix] Error checking focus:', e);
                 focused = !!focus;
             }
         }
@@ -259,7 +263,8 @@ export default class NativeOSKAutoShowWrap extends Extension {
     _isPasswordFocused() {
         try {
             return Main.inputMethod?.content_purpose === PASSWORD_PURPOSE;
-        } catch {
+        } catch (e) {
+            console.error('[osk-fix] Error checking password purpose:', e);
             return false;
         }
     }
