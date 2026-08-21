@@ -82,7 +82,8 @@ export default class OskFixExtension extends Extension {
         // Safe method wrapping - preserves existing wrappers
         if (typeof Main.keyboard.maybeHandleEvent === 'function') {
             this._oldMaybeHandleEvent = Main.keyboard.maybeHandleEvent;
-            Main.keyboard.maybeHandleEvent = (event) => this._maybeHandleEvent(event);
+            this._maybeHandleEventWrapper = (event) => this._maybeHandleEvent(event);
+            Main.keyboard.maybeHandleEvent = this._maybeHandleEventWrapper;
         }
 
         // Input method focus change signal (event-driven, no polling)
@@ -230,10 +231,11 @@ export default class OskFixExtension extends Extension {
         }
 
         // Safe unwrapping: only restore if we're still the wrapper
-        if (this._oldMaybeHandleEvent && Main.keyboard.maybeHandleEvent === (event) => this._maybeHandleEvent(event)) {
+        if (this._oldMaybeHandleEvent && Main.keyboard.maybeHandleEvent === this._maybeHandleEventWrapper) {
             Main.keyboard.maybeHandleEvent = this._oldMaybeHandleEvent;
         }
         this._oldMaybeHandleEvent = null;
+        this._maybeHandleEventWrapper = null;
 
         if (Main.keyboard && this._originalLastDeviceIsTouchscreen !== undefined) {
             Main.keyboard._lastDeviceIsTouchscreen = this._originalLastDeviceIsTouchscreen;
