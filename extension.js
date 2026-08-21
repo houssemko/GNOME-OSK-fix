@@ -3,10 +3,8 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
-import { KeyboardManager } from 'resource:///org/gnome/shell/ui/keyboard.js';
 import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 
-const POLL_INTERVAL_MS = 300;
 const TOUCH_EVENT_TYPES = new Set([
     Clutter.EventType.TOUCH_BEGIN,
     Clutter.EventType.TOUCH_UPDATE,
@@ -20,85 +18,88 @@ const PASSWORD_PURPOSE = Clutter.InputContentPurpose.PASSWORD;
 
 export default class OskFixExtension extends Extension {
     enable() {
-        this._pollId = 0;
-        this._oldMaybeHandleEvent = null;
-        this._originalLastDeviceIsTouchscreen = null;
-
+        this._signalIds = [];
+        this._didOverrideOsk = false;
         this._lastPointerPressTime = 0;
-        this._prevVisible = false;
         this._prevKeyFocusActor = null;
         this._prevInputFocus = null;
-        this._capturedEventHandlerId = 0;
-        this._buttonPressHandlerId = 0;
-        this._keyFocusHandlerId = 0;
 
-        this._a11y = new Gio.Settings({
-            schema_id: 'org.gnome.desktop.a11y.applications',
-        });
-        this._oldEnabled = this._a11y.get_boolean('screen-keyboard-enabled');
-        this._a11y.set_boolean('screen-keyboard-enabled', true);
+        this._a11y = new Gio.Settings({ schema_id: 'org.gnome.desktop.a11y.applications' });
+        this._originalOskEnabled = this._a11y.get_boolean('screen-keyboard-enabled');
 
-        this._originalLastDeviceIsTouchscreen =
-            KeyboardManager.prototype._lastDeviceIsTouchscreen;
-        KeyboardManager.prototype._lastDeviceIsTouchscreen = () => true;
+        if (!this._originalOskEnabled) {
+            this._a11y.set_boolean('screen-keyboard-enabled', true);
+            this._didOverrideOsk = true;
+        }
 
-        this._capturedEventHandlerId = global.stage.connect(
-            'captured-event',
-            (actor, event) => this._onCapturedEvent(actor, event)
-        );
-        this._buttonPressHandlerId = global.stage.connect(
-            'button-press-event',
-            (actor, event) => this._onCapturedEvent(actor, event)
-        );
+        if (Main.keyboard) {
+            this._originalLastDeviceIsTouchscreen = Main.keyboard._lastDeviceIsTouchscreen;
+            Main.keyboard._lastDeviceIsTouchscreen = () => true;
+        }
+
+        if (Main.inputMethod) {
+            this._signalIds.push([
+                Main.inputMethod,
+                Main.inputMethod.connect('notify::current-focus', () => this._onFocusChange())
+            ]);
+        }
+
+        this._signalIds.push([
+            global.stage,
+            global.stage.connect('captured-event', (actor, event) => this._onCapturedEvent(actor, event))
+        ]);
+
+        this._signalIds.push([
+            global.stage,
+            global.stage.connect('button-press-event', (actor, event) => this._onCapturedEvent(actor, event))
+        ]);
 
         try {
-            this._keyFocusHandlerId = global.stage.connect('notify::key-focus',
-                () => {
-                    const focusActor = global.stage.key_focus;
-                    if (focusActor && this._actorIsText(focusActor) && !this._prevKeyFocusActor) {
-                        this._lastPointerPressTime = Date.now();
-                    }
-                    this._prevKeyFocusActor = focusActor;
-                });
+            this._signalIds.push([
+                global.stage,
+                global.stage.connect('notify::key-focus', () => this._onKeyFocusChange())
+            ]);
         } catch (e) {
             console.error('[osk-fix] Failed to connect key-focus signal:', e);
         }
 
-        this._oldMaybeHandleEvent = Main.keyboard.maybeHandleEvent;
-        Main.keyboard.maybeHandleEvent = (event) => {
-            const handled = this._oldMaybeHandleEvent.call(Main.keyboard, event);
-            if (handled)
-                return true;
+        if (Main.overview) {
+            this._signalIds.push([
+                Main.overview,
+                Main.overview.connect('hidden', () => this._onFocusChange())
+            ]);
+        }
+    }
 
-            if (!Main.keyboard || !Main.keyboard._keyboard)
-                return false;
+    disable() {
+        if (this._signalIds) {
+            for (const [obj, signalId] of this._signalIds) {
+                if (obj && signalId) {
+                    try {
+                        obj.disconnect(signalId);
+                    } catch (e) {
+                        console.error('[osk-fix] Error disconnecting signal:', e);
+                    }
+                }
+            }
+            this._signalIds = [];
+        }
 
-            const actor = global.stage.get_event_actor(event);
-            if (!actor || !this._actorIsText(actor))
-                return false;
+        if (Main.keyboard && this._originalLastDeviceIsTouchscreen !== undefined) {
+            Main.keyboard._lastDeviceIsTouchscreen = this._originalLastDeviceIsTouchscreen;
+            this._originalLastDeviceIsTouchscreen = undefined;
+        }
 
-            const evType = event.type();
-            const shouldOpen = TOUCH_EVENT_TYPES.has(evType);
+        if (this._didOverrideOsk && this._a11y) {
+            this._a11y.set_boolean('screen-keyboard-enabled', this._originalOskEnabled);
+            this._didOverrideOsk = false;
+        }
 
-            if (!shouldOpen)
-                return false;
+        this._a11y = null;
 
-            if (this._isPasswordFocused())
-                return false;
-
-            if (!Main.keyboard.visible)
-                Main.keyboard.open(Main.layoutManager.focusIndex);
-
-            return false;
-        };
-
-        this._pollId = GLib.timeout_add(
-            GLib.PRIORITY_DEFAULT, POLL_INTERVAL_MS, () => {
-                this._poll();
-                return GLib.SOURCE_CONTINUE;
-            });
-        GLib.Source.set_name_by_id(this._pollId,
-            '[osk-fix] poll');
+        if (Main.keyboard && Main.keyboard.visible) {
+            Main.keyboard.close();
+        }
     }
 
     _onCapturedEvent(actor, event) {
@@ -107,85 +108,43 @@ export default class OskFixExtension extends Extension {
         }
     }
 
-    disable() {
-        if (this._pollId) {
-            GLib.source_remove(this._pollId);
-            this._pollId = 0;
+    _onKeyFocusChange() {
+        const focusActor = global.stage.key_focus;
+        if (focusActor && this._actorIsText(focusActor) && !this._prevKeyFocusActor) {
+            this._lastPointerPressTime = Date.now();
         }
-
-        if (this._keyFocusHandlerId) {
-            try {
-                global.stage.disconnect(this._keyFocusHandlerId);
-            } catch (e) {
-                console.error('[osk-fix] Failed to disconnect key-focus signal:', e);
-            }
-            this._keyFocusHandlerId = 0;
-        }
-
-        if (this._capturedEventHandlerId) {
-            global.stage.disconnect(this._capturedEventHandlerId);
-            this._capturedEventHandlerId = 0;
-        }
-        if (this._buttonPressHandlerId) {
-            global.stage.disconnect(this._buttonPressHandlerId);
-            this._buttonPressHandlerId = 0;
-        }
-
-        if (this._oldMaybeHandleEvent) {
-            Main.keyboard.maybeHandleEvent = this._oldMaybeHandleEvent;
-            this._oldMaybeHandleEvent = null;
-        }
-
-        if (this._originalLastDeviceIsTouchscreen) {
-            KeyboardManager.prototype._lastDeviceIsTouchscreen =
-                this._originalLastDeviceIsTouchscreen;
-            this._originalLastDeviceIsTouchscreen = null;
-        }
-
-        if (this._a11y) {
-            this._a11y.set_boolean('screen-keyboard-enabled', this._oldEnabled);
-            this._a11y = null;
-        }
-
-        if (Main.keyboard && Main.keyboard.visible)
-            Main.keyboard.close();
+        this._prevKeyFocusActor = focusActor;
     }
 
-    _poll() {
-        if (!Main.keyboard)
-            return;
+    _onFocusChange() {
+        if (!Main.keyboard || !Main.keyboard._keyboard) return;
 
         const focus = Main.inputMethod?.currentFocus;
-        let focused = false;
+        let hasFocus = false;
         if (focus) {
             try {
-                focused = !!focus.is_focused();
+                hasFocus = !!focus.is_focused();
             } catch (e) {
-                console.error('[osk-fix] Error checking focus:', e);
-                focused = !!focus;
+                hasFocus = !!focus;
             }
         }
-        const hasFocus = !!focused;
-        const kbd = Main.keyboard._keyboard;
-        const actorExists = !!kbd;
+
         const visible = Main.keyboard.visible;
-        if (visible && !this._prevVisible)
-            this._lastPointerPressTime = 0;
-        this._prevVisible = visible;
-        const requested = !!(kbd && kbd._keyboardRequested);
 
-        if (this._prevInputFocus !== null && this._prevInputFocus !== focus) {
-            this._prevInputFocus = null;
-        }
-
-        if (hasFocus && actorExists) {
-            if (!this._prevInputFocus)
+        if (hasFocus) {
+            if (!this._prevInputFocus) {
                 this._prevInputFocus = focus;
+            }
 
-            if (!visible && !requested) {
-                if (this._isPasswordFocused())
-                    return;
-                Main.keyboard.open(Main.layoutManager.focusIndex);
+            if (!visible) {
+                if (this._isPasswordFocused()) return;
+
+                const now = Date.now();
+                const recentTouch = this._lastPointerPressTime > 0 && (now - this._lastPointerPressTime) < 1000;
+
+                if (recentTouch) {
+                    Main.keyboard.open(Main.layoutManager.focusIndex);
+                }
             }
         } else if (!hasFocus && visible) {
             Main.keyboard.close();
@@ -196,8 +155,7 @@ export default class OskFixExtension extends Extension {
     _actorIsText(actor) {
         let cur = actor;
         while (cur) {
-            if (cur instanceof Clutter.Text)
-                return true;
+            if (cur instanceof Clutter.Text) return true;
             cur = cur.get_parent ? cur.get_parent() : null;
         }
         return false;
