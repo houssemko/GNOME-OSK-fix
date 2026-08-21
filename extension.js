@@ -5,6 +5,7 @@ import GLib from 'gi://GLib';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 
+const POLL_INTERVAL_MS = 300;
 const TOUCH_EVENT_TYPES = new Set([
     Clutter.EventType.TOUCH_BEGIN,
     Clutter.EventType.TOUCH_UPDATE,
@@ -18,9 +19,14 @@ const PASSWORD_PURPOSE = Clutter.InputContentPurpose.PASSWORD;
 
 export default class OskFixExtension extends Extension {
     enable() {
-        this._signalIds = [];
-        this._didOverrideOsk = false;
+        this._pollId = 0;
+        this._oldMaybeHandleEvent = null;
+        this._originalLastDeviceIsTouchscreen = null;
+
         this._lastPointerPressTime = 0;
+        this._prevVisible = false;
+        this._prevKeyFocusActor = null;
+        this._prevInputFocus = null;
 
         this._a11y = new Gio.Settings({ schema_id: 'org.gnome.desktop.a11y.applications' });
         this._originalOskEnabled = this._a11y.get_boolean('screen-keyboard-enabled');
@@ -35,54 +41,36 @@ export default class OskFixExtension extends Extension {
             Main.keyboard._lastDeviceIsTouchscreen = () => true;
         }
 
-        this._signalIds.push([
-            global.stage,
-            global.stage.connect('captured-event', (actor, event) => this._onCapturedEvent(actor, event))
-        ]);
+        this._capturedEventHandlerId = global.stage.connect(
+            'captured-event',
+            (actor, event) => this._onCapturedEvent(actor, event)
+        );
+        this._buttonPressHandlerId = global.stage.connect(
+            'button-press-event',
+            (actor, event) => this._onCapturedEvent(actor, event)
+        );
 
-        this._signalIds.push([
-            global.stage,
-            global.stage.connect('button-press-event', (actor, event) => this._onCapturedEvent(actor, event))
-        ]);
+        try {
+            this._keyFocusHandlerId = global.stage.connect('notify::key-focus', () => {
+                const focusActor = global.stage.key_focus;
+                if (focusActor && this._actorIsText(focusActor) && !this._prevKeyFocusActor) {
+                    this._lastPointerPressTime = Date.now();
+                }
+                this._prevKeyFocusActor = focusActor;
+            });
+        } catch (e) {
+            console.error('[osk-fix] Failed to connect key-focus signal:', e);
+        }
 
         this._oldMaybeHandleEvent = Main.keyboard.maybeHandleEvent;
         Main.keyboard.maybeHandleEvent = (event) => this._maybeHandleEvent(event);
-    }
 
-    disable() {
-        if (this._signalIds) {
-            for (const [obj, signalId] of this._signalIds) {
-                if (obj && signalId) {
-                    try {
-                        obj.disconnect(signalId);
-                    } catch (e) {
-                        console.error('[osk-fix] Error disconnecting signal:', e);
-                    }
-                }
-            }
-            this._signalIds = [];
-        }
-
-        if (Main.keyboard && this._originalLastDeviceIsTouchscreen !== undefined) {
-            Main.keyboard._lastDeviceIsTouchscreen = this._originalLastDeviceIsTouchscreen;
-            this._originalLastDeviceIsTouchscreen = undefined;
-        }
-
-        if (this._oldMaybeHandleEvent) {
-            Main.keyboard.maybeHandleEvent = this._oldMaybeHandleEvent;
-            this._oldMaybeHandleEvent = null;
-        }
-
-        if (this._didOverrideOsk && this._a11y) {
-            this._a11y.set_boolean('screen-keyboard-enabled', this._originalOskEnabled);
-            this._didOverrideOsk = false;
-        }
-
-        this._a11y = null;
-
-        if (Main.keyboard && Main.keyboard.visible) {
-            Main.keyboard.close();
-        }
+        this._pollId = GLib.timeout_add(
+            GLib.PRIORITY_DEFAULT, POLL_INTERVAL_MS, () => {
+                this._poll();
+                return GLib.SOURCE_CONTINUE;
+            });
+        GLib.Source.set_name_by_id(this._pollId, '[osk-fix] poll');
     }
 
     _onCapturedEvent(actor, event) {
@@ -112,6 +100,94 @@ export default class OskFixExtension extends Extension {
         }
 
         return false;
+    }
+
+    _poll() {
+        if (!Main.keyboard) return;
+
+        const focus = Main.inputMethod?.currentFocus;
+        let hasFocus = false;
+        if (focus) {
+            try {
+                hasFocus = !!focus.is_focused();
+            } catch (e) {
+                console.error('[osk-fix] Error checking focus:', e);
+                hasFocus = !!focus;
+            }
+        }
+
+        const kbd = Main.keyboard._keyboard;
+        const actorExists = !!kbd;
+        const visible = Main.keyboard.visible;
+        if (visible && !this._prevVisible) {
+            this._lastPointerPressTime = 0;
+        }
+        this._prevVisible = visible;
+        const requested = !!(kbd && kbd._keyboardRequested);
+
+        if (this._prevInputFocus !== null && this._prevInputFocus !== focus) {
+            this._prevInputFocus = null;
+        }
+
+        if (hasFocus && actorExists) {
+            if (!this._prevInputFocus) {
+                this._prevInputFocus = focus;
+            }
+
+            if (!visible && !requested) {
+                if (this._isPasswordFocused()) return;
+                Main.keyboard.open(Main.layoutManager.focusIndex);
+            }
+        } else if (!hasFocus && visible) {
+            Main.keyboard.close();
+            this._prevInputFocus = focus;
+        }
+    }
+
+    disable() {
+        if (this._pollId) {
+            GLib.source_remove(this._pollId);
+            this._pollId = 0;
+        }
+
+        if (this._keyFocusHandlerId) {
+            try {
+                global.stage.disconnect(this._keyFocusHandlerId);
+            } catch (e) {
+                console.error('[osk-fix] Failed to disconnect key-focus signal:', e);
+            }
+            this._keyFocusHandlerId = 0;
+        }
+
+        if (this._capturedEventHandlerId) {
+            global.stage.disconnect(this._capturedEventHandlerId);
+            this._capturedEventHandlerId = 0;
+        }
+        if (this._buttonPressHandlerId) {
+            global.stage.disconnect(this._buttonPressHandlerId);
+            this._buttonPressHandlerId = 0;
+        }
+
+        if (this._oldMaybeHandleEvent) {
+            Main.keyboard.maybeHandleEvent = this._oldMaybeHandleEvent;
+            this._oldMaybeHandleEvent = null;
+        }
+
+        if (Main.keyboard && this._originalLastDeviceIsTouchscreen !== undefined) {
+            Main.keyboard._lastDeviceIsTouchscreen = this._originalLastDeviceIsTouchscreen;
+            this._originalLastDeviceIsTouchscreen = undefined;
+        }
+
+        if (this._didOverrideOsk && this._a11y) {
+            this._a11y.set_boolean('screen-keyboard-enabled', this._originalOskEnabled);
+            this._didOverrideOsk = false;
+        }
+
+        this._a11y = null;
+
+        if (Main.keyboard && Main.keyboard.visible) {
+            Main.keyboard.close();
+        }
     }
 
     _actorIsText(actor) {
