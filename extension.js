@@ -24,6 +24,7 @@ export default class OskFixExtension extends Extension {
         this._originalLastDeviceIsTouchscreen = null;
         this._userHidden = false;
         this._visibilitySignalId = 0;
+        this._recentKeyboardTouch = false;
 
         this._lastPointerPressTime = 0;
         this._prevVisible = false;
@@ -43,8 +44,10 @@ export default class OskFixExtension extends Extension {
             Main.keyboard._lastDeviceIsTouchscreen = () => true;
 
             this._visibilitySignalId = Main.keyboard.connect('visibility-changed', () => {
-                if (!Main.keyboard.visible) {
+                // Only mark as user-hidden if the hide was triggered by touching the keyboard itself
+                if (!Main.keyboard.visible && this._recentKeyboardTouch) {
                     this._userHidden = true;
+                    this._recentKeyboardTouch = false;
                 }
             });
         }
@@ -85,7 +88,15 @@ export default class OskFixExtension extends Extension {
     _onCapturedEvent(actor, event) {
         if (POINTER_PRESS_TYPES.has(event.type())) {
             this._lastPointerPressTime = Date.now();
-            this._userHidden = false;
+            
+            // Check if the touch/click was on the keyboard itself (hide button)
+            const keyboardActor = Main.keyboard?._keyboard;
+            if (keyboardActor && (actor === keyboardActor || this._isDescendant(actor, keyboardActor))) {
+                this._recentKeyboardTouch = true;
+            } else {
+                this._userHidden = false;
+                this._recentKeyboardTouch = false;
+            }
         }
     }
 
@@ -203,6 +214,15 @@ export default class OskFixExtension extends Extension {
         if (Main.keyboard && Main.keyboard.visible) {
             Main.keyboard.close();
         }
+    }
+
+    _isDescendant(actor, ancestor) {
+        let cur = actor;
+        while (cur) {
+            if (cur === ancestor) return true;
+            cur = cur.get_parent ? cur.get_parent() : null;
+        }
+        return false;
     }
 
     _actorIsText(actor) {
