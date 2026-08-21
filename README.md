@@ -6,9 +6,10 @@ A GNOME Shell extension that forces the native on-screen keyboard (OSK) to appea
 
 - Forces the native OSK to show in applications that don't normally trigger it
 - Works with XWayland applications (Chromium, Vivaldi, Firefox, Electron apps, etc.)
-- Configurable open modes: touch, click, or always
-- Option to ignore password fields
-- Option to force touch mode for sessions without detected touchscreen
+- Always opens OSK on touch events
+- Automatically ignores password fields
+- Forces touch mode for sessions without detected touchscreen
+- Polls for input method focus changes (catches apps that don't emit proper events)
 
 ## Installation
 
@@ -31,15 +32,6 @@ cp -r osk-fix@local ~/.local/share/gnome-shell/extensions/
 # Enable the extension
 gnome-extensions enable osk-fix@local
 ```
-
-## Configuration
-
-Use the Extension Manager or GNOME Extensions app to configure:
-- **Open mode**: When to open the OSK (touch, click, or always)
-- **Enable poll**: Poll for input method focus changes (catches apps that don't emit proper events)
-- **Force touch mode**: Enable OSK even when no touchscreen is detected
-- **Ignore password fields**: Don't open OSK for password fields
-- **Click threshold**: Maximum delay between click and focus in "click" mode
 
 ## Compatibility
 
