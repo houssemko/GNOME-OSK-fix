@@ -1,8 +1,8 @@
 {
-    "uuid": "osk-fiix@local",
-    "name": "OSK fiix",
+    "uuid": "osk-fix@local",
+    "name": "OSK Fix",
     "description": "Wraps the native GNOME on-screen keyboard so it appears in any app, including Chromium/Vivaldi/Firefox under XWayland. Hooks maybeHandleEvent, polls Main.inputMethod.currentFocus, and forces _lastDeviceIsTouchscreen to true.",
-    "settings-schema": "org.gnome.shell.extensions.osk-fiix",
+    "settings-schema": "org.gnome.shell.extensions.osk-fix",
     "shell-version": [
         "49",
         "50"

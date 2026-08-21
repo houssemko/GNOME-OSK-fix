@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <schemalist>
-  <schema id="org.gnome.shell.extensions.osk-fiix" path="/org/gnome/shell/extensions/osk-fiix/">
+  <schema id="org.gnome.shell.extensions.osk-fix" path="/org/gnome/shell/extensions/osk-fix/">
     <key name="open-mode" type="s">
       <default>'touch'</default>
       <summary>When to open the OSK</summary>
