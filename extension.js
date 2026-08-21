@@ -26,6 +26,9 @@ export default class OskFixExtension extends Extension {
         this._prevKeyFocusActor = null;
         this._prevInputFocus = null;
         this._focusLossTimerId = 0;
+        this._capturedEventHandlerId = 0;
+        this._keyFocusHandlerId = 0;
+        this._inputMethodSignalId = 0;
 
         // Guard: Main.keyboard must exist
         if (!Main.keyboard) {
@@ -33,6 +36,7 @@ export default class OskFixExtension extends Extension {
             return;
         }
 
+        // Store original a11y setting, only override if explicitly disabled
         this._a11y = new Gio.Settings({ schema_id: 'org.gnome.desktop.a11y.applications' });
         this._originalOskEnabled = this._a11y.get_boolean('screen-keyboard-enabled');
 
@@ -41,9 +45,11 @@ export default class OskFixExtension extends Extension {
             this._didOverrideOsk = true;
         }
 
-        // Instance patching (not prototype) - more compatible
-        this._originalLastDeviceIsTouchscreen = Main.keyboard._lastDeviceIsTouchscreen;
-        Main.keyboard._lastDeviceIsTouchscreen = () => true;
+        // Instance patching - safe fallback if property doesn't exist
+        if ('_lastDeviceIsTouchscreen' in Main.keyboard) {
+            this._originalLastDeviceIsTouchscreen = Main.keyboard._lastDeviceIsTouchscreen;
+            Main.keyboard._lastDeviceIsTouchscreen = () => true;
+        }
 
         // Track hide button press via visibility signal
         this._visibilitySignalId = Main.keyboard.connect('visibility-changed', () => {
@@ -79,20 +85,12 @@ export default class OskFixExtension extends Extension {
             Main.keyboard.maybeHandleEvent = (event) => this._maybeHandleEvent(event);
         }
 
-        // Input method focus change signal (preferred over polling)
+        // Input method focus change signal (event-driven, no polling)
         if (Main.inputMethod) {
             this._inputMethodSignalId = Main.inputMethod.connect('notify::current-focus', () => {
                 this._onInputMethodFocusChange();
             });
         }
-
-        // Fallback polling loop for cases where signals don't fire
-        this._pollId = GLib.timeout_add(
-            GLib.PRIORITY_DEFAULT, 300, () => {
-                this._poll();
-                return GLib.SOURCE_CONTINUE;
-            });
-        GLib.Source.set_name_by_id(this._pollId, '[osk-fix] poll');
     }
 
     _onCapturedEvent(actor, event) {
@@ -100,8 +98,9 @@ export default class OskFixExtension extends Extension {
 
         this._lastPointerPressTime = Date.now();
 
+        // Only detect hide button: check for hide-button style class or icon
         const keyboardActor = Main.keyboard?._keyboard;
-        if (keyboardActor && (actor === keyboardActor || this._isDescendant(actor, keyboardActor))) {
+        if (keyboardActor && this._isHideButtonPress(actor, keyboardActor)) {
             this._hideButtonPressed = true;
             return;
         }
@@ -112,8 +111,24 @@ export default class OskFixExtension extends Extension {
         }
     }
 
+    _isHideButtonPress(actor, keyboardActor) {
+        // Walk up from target to find the actual pressed button
+        let cur = actor;
+        while (cur && cur !== keyboardActor) {
+            // Hide button has 'hide-key' style class and 'osk-hide-symbolic' icon
+            if (cur.style_class && cur.style_class.includes('hide-key')) {
+                return true;
+            }
+            if (cur.icon_name === 'osk-hide-symbolic') {
+                return true;
+            }
+            cur = cur.get_parent ? cur.get_parent() : null;
+        }
+        return false;
+    }
+
     _maybeHandleEvent(event) {
-        const handled = this._oldMaybeHandleEvent.call(Main.keyboard, event);
+        const handled = this._oldMaybeHandleEvent?.call(Main.keyboard, event);
         if (handled) return true;
 
         if (!Main.keyboard || !Main.keyboard._keyboard) return false;
@@ -123,8 +138,7 @@ export default class OskFixExtension extends Extension {
 
         if (event.type() !== Clutter.EventType.BUTTON_PRESS) return false;
 
-        if (this._isPasswordFocused()) return false;
-
+        // Allow OSK for password fields - user needs to type passwords
         if (!Main.keyboard.visible && !this._userHidden) {
             Main.keyboard.open(Main.layoutManager.focusIndex);
         }
@@ -133,7 +147,6 @@ export default class OskFixExtension extends Extension {
     }
 
     _onInputMethodFocusChange() {
-        // Signal-based focus detection - more responsive than polling
         if (!Main.keyboard || !Main.keyboard._keyboard) return;
 
         const focus = Main.inputMethod?.currentFocus;
@@ -149,17 +162,18 @@ export default class OskFixExtension extends Extension {
         const visible = Main.keyboard.visible;
         const requested = !!(Main.keyboard._keyboard && Main.keyboard._keyboard._keyboardRequested);
 
-        if (hasFocus && !visible && !requested && !this._userHidden && !this._hideButtonPressed) {
-            if (this._isPasswordFocused()) return;
+        // Only open on NEW focus with recent click (click-gate)
+        const recentClick = this._lastPointerPressTime > 0 && (Date.now() - this._lastPointerPressTime) < 500;
+
+        if (hasFocus && !visible && !requested && recentClick && !this._userHidden && !this._hideButtonPressed) {
             Main.keyboard.open(Main.layoutManager.focusIndex);
         } else if (!hasFocus && visible) {
-            // Schedule delayed close for grace period
             this._scheduleFocusLossClose();
         }
     }
 
     _scheduleFocusLossClose() {
-        if (this._focusLossTimerId) return; // Already scheduled
+        if (this._focusLossTimerId) return;
 
         this._focusLossTimerId = GLib.timeout_add_once(GLib.PRIORITY_DEFAULT, FOCUS_LOSS_GRACE_MS, () => {
             this._focusLossTimerId = 0;
@@ -178,51 +192,6 @@ export default class OskFixExtension extends Extension {
                 }
             }
         });
-    }
-
-    _poll() {
-        if (!Main.keyboard) return;
-
-        const focus = Main.inputMethod?.currentFocus;
-        let hasFocus = false;
-        if (focus) {
-            try {
-                hasFocus = !!focus.is_focused();
-            } catch (e) {
-                hasFocus = !!focus;
-            }
-        }
-
-        const kbd = Main.keyboard._keyboard;
-        const actorExists = !!kbd;
-        const visible = Main.keyboard.visible;
-        if (visible && !this._prevVisible) {
-            this._lastPointerPressTime = 0;
-        }
-        this._prevVisible = visible;
-        const requested = !!(kbd && kbd._keyboardRequested);
-
-        const focusChanged = this._prevInputFocus !== null && this._prevInputFocus !== focus;
-        if (focusChanged) {
-            this._prevInputFocus = null;
-        }
-
-        if (hasFocus && actorExists) {
-            const isNewFocus = !this._prevInputFocus;
-            if (isNewFocus) {
-                this._prevInputFocus = focus;
-            }
-
-            const recentClick = this._lastPointerPressTime > 0 && (Date.now() - this._lastPointerPressTime) < 500;
-
-            if (!visible && !requested && (isNewFocus || recentClick) && !this._userHidden && !this._hideButtonPressed) {
-                if (this._isPasswordFocused()) return;
-                Main.keyboard.open(Main.layoutManager.focusIndex);
-            }
-        } else if (!hasFocus && visible) {
-            this._scheduleFocusLossClose();
-            this._prevInputFocus = focus;
-        }
     }
 
     disable() {
@@ -260,10 +229,11 @@ export default class OskFixExtension extends Extension {
             this._visibilitySignalId = 0;
         }
 
-        if (this._oldMaybeHandleEvent) {
+        // Safe unwrapping: only restore if we're still the wrapper
+        if (this._oldMaybeHandleEvent && Main.keyboard.maybeHandleEvent === (event) => this._maybeHandleEvent(event)) {
             Main.keyboard.maybeHandleEvent = this._oldMaybeHandleEvent;
-            this._oldMaybeHandleEvent = null;
         }
+        this._oldMaybeHandleEvent = null;
 
         if (Main.keyboard && this._originalLastDeviceIsTouchscreen !== undefined) {
             Main.keyboard._lastDeviceIsTouchscreen = this._originalLastDeviceIsTouchscreen;
@@ -291,27 +261,13 @@ export default class OskFixExtension extends Extension {
         return false;
     }
 
-    /**
-     * Checks if actor or its ancestors represent an editable text field.
-     * Checks Clutter.Text, St.Entry, St.TextArea, and input-method-focusable actors.
-     */
     _actorIsText(actor) {
         let cur = actor;
         while (cur) {
             if (cur instanceof Clutter.Text) return true;
-            // GTK Wayland surfaces often have inputMethodHints
             if (cur.inputMethodHints !== undefined) return true;
             cur = cur.get_parent ? cur.get_parent() : null;
         }
         return false;
-    }
-
-    _isPasswordFocused() {
-        try {
-            return Main.inputMethod?.content_purpose === PASSWORD_PURPOSE;
-        } catch (e) {
-            console.error('[osk-fix] Error checking password purpose:', e);
-            return false;
-        }
     }
 }
