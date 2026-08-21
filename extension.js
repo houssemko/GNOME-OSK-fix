@@ -89,14 +89,12 @@ export default class OskFixExtension extends Extension {
 
         this._lastPointerPressTime = Date.now();
 
-        // Detect hide button press (touch on keyboard actor)
         const keyboardActor = Main.keyboard?._keyboard;
         if (keyboardActor && (actor === keyboardActor || this._isDescendant(actor, keyboardActor))) {
             this._hideButtonPressed = true;
             return;
         }
 
-        // Any other touch/click on a text field clears the user-hidden flag
         if (this._actorIsText(actor)) {
             this._userHidden = false;
             this._hideButtonPressed = false;
@@ -158,7 +156,8 @@ export default class OskFixExtension extends Extension {
                 this._prevInputFocus = focus;
             }
 
-            if (!visible && !requested && !this._userHidden) {
+            // Don't auto-open if user explicitly hid via keyboard button
+            if (!visible && !requested && !this._userHidden && !this._hideButtonPressed) {
                 if (this._isPasswordFocused()) return;
                 Main.keyboard.open(Main.layoutManager.focusIndex);
             }
