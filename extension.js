@@ -20,7 +20,6 @@ export default class OskFixExtension extends Extension {
         this._userHidden = false;
         this._hiddenFocusObject = null;
         this._lastPointerPressTime = 0;
-        this._lastCursorMoveTime = 0;
         this._prevInputFocus = null;
         this._prevVisible = false;
 
@@ -29,7 +28,6 @@ export default class OskFixExtension extends Extension {
         this._originalLastDeviceIsTouchscreen = null;
         this._visibilitySignalId = 0;
         this._capturedEventHandlerId = 0;
-        this._cursorLocationSignalId = 0;
 
         // Conditional a11y override - needed when no touchscreen means
         // touch_mode is false and the Keyboard object is never created.
@@ -66,15 +64,6 @@ export default class OskFixExtension extends Extension {
             'captured-event',
             (actor, event) => this._onCapturedEvent(actor, event)
         );
-
-        // Caret movement inside the focused editable - distinguishes
-        // "clicked inside a field" from "clicked a toolbar/button"
-        if (Main.inputMethod) {
-            this._cursorLocationSignalId = Main.inputMethod.connect(
-                'cursor-location-changed',
-                () => { this._lastCursorMoveTime = Date.now(); }
-            );
-        }
 
         this._startPolling();
     }
@@ -150,22 +139,18 @@ export default class OskFixExtension extends Extension {
                 ? Date.now() - this._lastPointerPressTime : Infinity;
             const wasUserInitiated = timeSinceInteraction < INTERACT_GUARD_MS;
 
-            // Caret moved recently? Clicking inside a field moves the caret;
-            // clicking a toolbar/button does not.
-            const timeSinceCaretMove = this._lastCursorMoveTime > 0
-                ? Date.now() - this._lastCursorMoveTime : Infinity;
-            const recentCaretMove = timeSinceCaretMove < INTERACT_GUARD_MS;
-
             const newFieldOpen = focusChanged && wasUserInitiated;
-            const sameFieldReopen = !focusChanged && wasUserInitiated && recentCaretMove;
+            // No caret-move requirement here: Chromium/Vivaldi don't emit
+            // cursor updates on plain clicks, which made this path dead.
+            const sameFieldReopen = !focusChanged && wasUserInitiated;
 
             let shouldOpen = false;
             if (newFieldOpen) {
                 // Respect per-field hide when landing on the hidden field itself
                 shouldOpen = !this._userHidden;
             } else if (sameFieldReopen) {
-                // Explicit physical interaction (click + caret move) is
-                // stronger intent than a previous hide - always reopen.
+                // Explicit physical interaction is stronger intent than a
+                // previous hide - always reopen.
                 shouldOpen = true;
                 this._userHidden = false;
                 this._hiddenFocusObject = null;
@@ -182,8 +167,11 @@ export default class OskFixExtension extends Extension {
             this._hiddenFocusObject = null;
         }
 
-        // Adaptive cleanup: stop polling when idle and keyboard is closed
+        // Adaptive cleanup: stop polling when idle and keyboard is closed.
+        // Reset focus memory so returning later counts as a fresh focus
+        // change (prevents same-field dead zone after idle periods).
         if (this._idleTicks >= IDLE_POLL_LIMIT && !visible) {
+            this._prevInputFocus = null;
             this._pollId = 0;
             return GLib.SOURCE_REMOVE;
         }
@@ -251,11 +239,6 @@ export default class OskFixExtension extends Extension {
         if (this._capturedEventHandlerId) {
             global.stage.disconnect(this._capturedEventHandlerId);
             this._capturedEventHandlerId = 0;
-        }
-
-        if (this._cursorLocationSignalId && Main.inputMethod) {
-            Main.inputMethod.disconnect(this._cursorLocationSignalId);
-            this._cursorLocationSignalId = 0;
         }
 
         if (this._visibilitySignalId && Main.keyboard) {
