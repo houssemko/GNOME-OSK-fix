@@ -134,6 +134,15 @@ export default class OskFixExtension extends Extension {
         if (focusChanged) {
             this._prevInputFocus = focus;
             this._idleTicks = 0;
+
+            // Focus moved to a different editable - lift explicit-hide state.
+            // Toolkit-independent (works for Wayland apps whose actors aren't
+            // Clutter.Text). Safe against hide-button races: pressing hide
+            // never changes input-method focus.
+            if (hasFocus) {
+                this._userHidden = false;
+                this._hideButtonPressed = false;
+            }
         } else {
             this._idleTicks++;
         }
