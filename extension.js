@@ -22,6 +22,8 @@ export default class OskFixExtension extends Extension {
         this._pollId = 0;
         this._oldMaybeHandleEvent = null;
         this._originalLastDeviceIsTouchscreen = null;
+        this._userHidden = false;
+        this._visibilitySignalId = 0;
 
         this._lastPointerPressTime = 0;
         this._prevVisible = false;
@@ -39,6 +41,12 @@ export default class OskFixExtension extends Extension {
         if (Main.keyboard) {
             this._originalLastDeviceIsTouchscreen = Main.keyboard._lastDeviceIsTouchscreen;
             Main.keyboard._lastDeviceIsTouchscreen = () => true;
+
+            this._visibilitySignalId = Main.keyboard.connect('visibility-changed', () => {
+                if (!Main.keyboard.visible) {
+                    this._userHidden = true;
+                }
+            });
         }
 
         this._capturedEventHandlerId = global.stage.connect(
@@ -55,6 +63,7 @@ export default class OskFixExtension extends Extension {
                 const focusActor = global.stage.key_focus;
                 if (focusActor && this._actorIsText(focusActor) && !this._prevKeyFocusActor) {
                     this._lastPointerPressTime = Date.now();
+                    this._userHidden = false;
                 }
                 this._prevKeyFocusActor = focusActor;
             });
@@ -76,6 +85,7 @@ export default class OskFixExtension extends Extension {
     _onCapturedEvent(actor, event) {
         if (POINTER_PRESS_TYPES.has(event.type())) {
             this._lastPointerPressTime = Date.now();
+            this._userHidden = false;
         }
     }
 
@@ -95,7 +105,7 @@ export default class OskFixExtension extends Extension {
 
         if (this._isPasswordFocused()) return false;
 
-        if (!Main.keyboard.visible) {
+        if (!Main.keyboard.visible && !this._userHidden) {
             Main.keyboard.open(Main.layoutManager.focusIndex);
         }
 
@@ -134,7 +144,7 @@ export default class OskFixExtension extends Extension {
                 this._prevInputFocus = focus;
             }
 
-            if (!visible && !requested) {
+            if (!visible && !requested && !this._userHidden) {
                 if (this._isPasswordFocused()) return;
                 Main.keyboard.open(Main.layoutManager.focusIndex);
             }
@@ -166,6 +176,11 @@ export default class OskFixExtension extends Extension {
         if (this._buttonPressHandlerId) {
             global.stage.disconnect(this._buttonPressHandlerId);
             this._buttonPressHandlerId = 0;
+        }
+
+        if (this._visibilitySignalId && Main.keyboard) {
+            Main.keyboard.disconnect(this._visibilitySignalId);
+            this._visibilitySignalId = 0;
         }
 
         if (this._oldMaybeHandleEvent) {
