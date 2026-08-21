@@ -24,7 +24,7 @@ export default class OskFixExtension extends Extension {
         this._originalLastDeviceIsTouchscreen = null;
         this._userHidden = false;
         this._visibilitySignalId = 0;
-        this._recentKeyboardTouch = false;
+        this._hideButtonPressed = false;
 
         this._lastPointerPressTime = 0;
         this._prevVisible = false;
@@ -44,10 +44,9 @@ export default class OskFixExtension extends Extension {
             Main.keyboard._lastDeviceIsTouchscreen = () => true;
 
             this._visibilitySignalId = Main.keyboard.connect('visibility-changed', () => {
-                // Only mark as user-hidden if the hide was triggered by touching the keyboard itself
-                if (!Main.keyboard.visible && this._recentKeyboardTouch) {
+                if (!Main.keyboard.visible && this._hideButtonPressed) {
                     this._userHidden = true;
-                    this._recentKeyboardTouch = false;
+                    this._hideButtonPressed = false;
                 }
             });
         }
@@ -86,17 +85,21 @@ export default class OskFixExtension extends Extension {
     }
 
     _onCapturedEvent(actor, event) {
-        if (POINTER_PRESS_TYPES.has(event.type())) {
-            this._lastPointerPressTime = Date.now();
-            
-            // Check if the touch/click was on the keyboard itself (hide button)
-            const keyboardActor = Main.keyboard?._keyboard;
-            if (keyboardActor && (actor === keyboardActor || this._isDescendant(actor, keyboardActor))) {
-                this._recentKeyboardTouch = true;
-            } else {
-                this._userHidden = false;
-                this._recentKeyboardTouch = false;
-            }
+        if (!POINTER_PRESS_TYPES.has(event.type())) return;
+
+        this._lastPointerPressTime = Date.now();
+
+        // Detect hide button press (touch on keyboard actor)
+        const keyboardActor = Main.keyboard?._keyboard;
+        if (keyboardActor && (actor === keyboardActor || this._isDescendant(actor, keyboardActor))) {
+            this._hideButtonPressed = true;
+            return;
+        }
+
+        // Any other touch/click on a text field clears the user-hidden flag
+        if (this._actorIsText(actor)) {
+            this._userHidden = false;
+            this._hideButtonPressed = false;
         }
     }
 
