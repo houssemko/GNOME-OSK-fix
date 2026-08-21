@@ -11,6 +11,7 @@ const POINTER_PRESS_TYPES = new Set([
 ]);
 const PASSWORD_PURPOSE = Clutter.InputContentPurpose.PASSWORD;
 const IDLE_POLL_LIMIT = 10; // Stop polling after ~3s of inactivity
+const INTERACT_GUARD_MS = 400; // Focus change must follow a click within this window
 
 export default class OskFixExtension extends Extension {
     enable() {
@@ -148,9 +149,16 @@ export default class OskFixExtension extends Extension {
         }
 
         if (hasFocus) {
-            const recentClick = this._lastPointerPressTime > 0 && (Date.now() - this._lastPointerPressTime) < 600;
+            // Interactivity guard: focus change must be preceded by an
+            // explicit click/touch within INTERACT_GUARD_MS. Programmatic
+            // autofocus (app launch, .grab_focus()) has no preceding pointer
+            // event and stays suppressed.
+            const timeSinceInteraction = this._lastPointerPressTime > 0
+                ? Date.now() - this._lastPointerPressTime : Infinity;
+            const wasUserInitiated = timeSinceInteraction < INTERACT_GUARD_MS;
 
-            if (!visible && !requested && (focusChanged || recentClick) && !this._userHidden && !this._hideButtonPressed) {
+            if (!visible && !requested && focusChanged && wasUserInitiated &&
+                !this._userHidden && !this._hideButtonPressed) {
                 if (!this._isPasswordFocused()) {
                     Main.keyboard.open(Main.layoutManager.focusIndex);
                 }
