@@ -1,15 +1,17 @@
 # OSK Fix
 
-A GNOME Shell extension that forces the native on-screen keyboard (OSK) to appear in applications that don't normally trigger it, including Chromium, Vivaldi, Firefox, and other XWayland applications.
+A GNOME Shell extension that forces the native on-screen keyboard (OSK) to appear in applications that don't normally trigger it, including Chromium, Vivaldi, Firefox, Electron apps, and other XWayland applications.
 
 ## Features
 
 - Forces the native OSK to show in applications that don't normally trigger it
 - Works with XWayland applications (Chromium, Vivaldi, Firefox, Electron apps, etc.)
-- Always opens OSK on touch events
-- Automatically ignores password fields
+- Click-only activation — opens OSK on mouse/touchpad click in text fields
+- Opens OSK for password fields (user can type passwords)
 - Forces touch mode for sessions without detected touchscreen
-- Polls for input method focus changes (catches apps that don't emit proper events)
+- Respects manual hide: pressing the OSK's hide button keeps it hidden until next click
+- Event-driven (no polling loop) — uses `notify::current-focus` and captured events
+- Safe coexistence with other extensions — preserves and restores monkey-patched methods
 
 ## Installation
 
@@ -33,8 +35,22 @@ cp -r osk-fix@local ~/.local/share/gnome-shell/extensions/
 gnome-extensions enable osk-fix@local
 ```
 
+## Behavior
+
+| Action | Result |
+|--------|--------|
+| Click text field | OSK opens |
+| Click OSK hide button | OSK stays hidden |
+| Click another text field | OSK opens again |
+| Focus via Tab/keyboard | OSK stays closed (click required) |
+| Focus password field | OSK opens |
+
 ## Compatibility
 
+- GNOME Shell 45
+- GNOME Shell 46
+- GNOME Shell 47
+- GNOME Shell 48
 - GNOME Shell 49
 - GNOME Shell 50
 
