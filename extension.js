@@ -9,6 +9,7 @@ const POINTER_PRESS_TYPES = new Set([
     Clutter.EventType.BUTTON_PRESS,
 ]);
 const PASSWORD_PURPOSE = Clutter.InputContentPurpose.PASSWORD;
+const IDLE_POLL_LIMIT = 10; // Stop polling after ~3s of inactivity
 
 export default class OskFixExtension extends Extension {
     enable() {
@@ -80,18 +81,32 @@ export default class OskFixExtension extends Extension {
             console.error('[osk-fix] Failed to connect key-focus signal:', e);
         }
 
+        this._startPolling();
+    }
+
+    _startPolling() {
+        this._idleTicks = 0;
+        if (this._pollId) return;
+
         this._pollId = GLib.timeout_add(
             GLib.PRIORITY_DEFAULT, 300, () => {
-                this._poll();
-                return GLib.SOURCE_CONTINUE;
+                return this._poll();
             });
         GLib.Source.set_name_by_id(this._pollId, '[osk-fix] poll');
+    }
+
+    _stopPolling() {
+        if (this._pollId) {
+            GLib.source_remove(this._pollId);
+            this._pollId = 0;
+        }
     }
 
     _onCapturedEvent(actor, event) {
         if (!POINTER_PRESS_TYPES.has(event.type())) return;
 
         this._lastPointerPressTime = Date.now();
+        this._startPolling();
 
         // Only the hide button counts - not any OSK keypress
         const keyboardActor = Main.keyboard?._keyboard;
@@ -146,7 +161,7 @@ export default class OskFixExtension extends Extension {
     }
 
     _poll() {
-        if (!Main.keyboard) return;
+        if (!Main.keyboard) return false;
 
         const focus = Main.inputMethod?.currentFocus;
         let hasFocus = false;
@@ -168,6 +183,8 @@ export default class OskFixExtension extends Extension {
         this._prevVisible = visible;
         const requested = !!(kbd && kbd._keyboardRequested);
 
+        const recentClick = this._lastPointerPressTime > 0 && (Date.now() - this._lastPointerPressTime) < 500;
+
         const focusChanged = this._prevInputFocus !== null && this._prevInputFocus !== focus;
         if (focusChanged) {
             this._prevInputFocus = null;
@@ -179,24 +196,35 @@ export default class OskFixExtension extends Extension {
                 this._prevInputFocus = focus;
             }
 
-            const recentClick = this._lastPointerPressTime > 0 && (Date.now() - this._lastPointerPressTime) < 500;
-
             // Open on: focus change OR recent click on text field
             if (!visible && !requested && (isNewFocus || recentClick) && !this._userHidden && !this._hideButtonPressed) {
-                if (this._isPasswordFocused()) return;
+                if (this._isPasswordFocused()) return true;
                 Main.keyboard.open(Main.layoutManager.focusIndex);
             }
         } else if (!hasFocus && visible) {
             Main.keyboard.close();
             this._prevInputFocus = focus;
         }
+
+        // Idle tracking: stop the source when nothing happens and OSK is closed
+        if (visible || focusChanged || recentClick) {
+            this._idleTicks = 0;
+        } else {
+            this._idleTicks++;
+        }
+
+        if (this._idleTicks >= IDLE_POLL_LIMIT && !visible) {
+            // Reset focus memory so returning later counts as fresh
+            this._prevInputFocus = null;
+            this._pollId = 0;
+            return false; // SOURCE_REMOVE
+        }
+
+        return true;
     }
 
     disable() {
-        if (this._pollId) {
-            GLib.source_remove(this._pollId);
-            this._pollId = 0;
-        }
+        this._stopPolling();
 
         if (this._keyFocusHandlerId) {
             try {
