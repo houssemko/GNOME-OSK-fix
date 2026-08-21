@@ -1,8 +1,8 @@
 {
-    "uuid": "native-osk-autoshow-wrap@local",
-    "name": "Native OSK Auto-Show Wrap",
+    "uuid": "osk-fiix@local",
+    "name": "OSK fiix",
     "description": "Wraps the native GNOME on-screen keyboard so it appears in any app, including Chromium/Vivaldi/Firefox under XWayland. Hooks maybeHandleEvent, polls Main.inputMethod.currentFocus, and forces _lastDeviceIsTouchscreen to true.",
-    "settings-schema": "org.gnome.shell.extensions.native-osk-autoshow-wrap",
+    "settings-schema": "org.gnome.shell.extensions.osk-fiix",
     "shell-version": [
         "49",
         "50"
