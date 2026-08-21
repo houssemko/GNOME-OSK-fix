@@ -29,6 +29,7 @@ export default class NativeOSKAutoShowWrap extends Extension {
         this._lastPointerPressTime = 0;
         this._prevVisible = false;
         this._prevKeyFocusActor = null;
+        this._prevInputFocus = null;
         this._capturedEventHandlerId = 0;
         this._buttonPressHandlerId = 0;
         this._keyFocusHandlerId = 0;
@@ -214,7 +215,14 @@ export default class NativeOSKAutoShowWrap extends Extension {
         this._prevVisible = visible;
         const requested = !!(kbd && kbd._keyboardRequested);
 
+        if (this._prevInputFocus !== null && this._prevInputFocus !== focus) {
+            this._prevInputFocus = null;
+        }
+
         if (hasFocus && actorExists) {
+            if (!this._prevInputFocus)
+                this._prevInputFocus = focus;
+
             const mode = this._settings.get_string('open-mode');
             const now = Date.now();
             if (mode === 'always' && !visible && !requested) {
@@ -234,6 +242,7 @@ export default class NativeOSKAutoShowWrap extends Extension {
             }
         } else if (!hasFocus && visible) {
             Main.keyboard.close();
+            this._prevInputFocus = focus;
         }
     }
 
