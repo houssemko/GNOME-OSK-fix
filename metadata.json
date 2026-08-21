@@ -1,11 +1,17 @@
 {
     "uuid": "osk-fix@local",
     "name": "OSK Fix",
-    "description": "Wraps the native GNOME on-screen keyboard so it appears in any app, including Chromium/Vivaldi/Firefox under XWayland. Hooks maybeHandleEvent, polls Main.inputMethod.currentFocus, and forces _lastDeviceIsTouchscreen to true.",
+    "description": "Forces the native GNOME on-screen keyboard to appear in applications that don't normally trigger it (Chromium, Vivaldi, Firefox, Electron apps under XWayland). Respects manual hide via keyboard button. Click-only activation (no touch).",
     "shell-version": [
+        "45",
+        "46",
+        "47",
+        "48",
         "49",
         "50"
     ],
-    "version-name": "1.0",
-    "url": "https://github.com/houssemko/osk-fix"
+    "version-name": "2.0",
+    "url": "https://github.com/houssemko/osk-fix",
+    "original-authors": "houssemko",
+    "gettext-domain": "osk-fix"
 }
