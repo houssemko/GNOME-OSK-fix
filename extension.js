@@ -106,7 +106,10 @@ export default class OskFixExtension extends Extension {
     }
 
     _adaptivePoll() {
-        if (!Main.keyboard) return GLib.SOURCE_REMOVE;
+        if (!Main.keyboard) {
+            this._pollId = 0;
+            return GLib.SOURCE_REMOVE;
+        }
 
         const focus = Main.inputMethod?.currentFocus;
         let hasFocus = false;
@@ -168,9 +171,14 @@ export default class OskFixExtension extends Extension {
                 return focus.purpose === PASSWORD_PURPOSE;
             }
         } catch (e) {
+            // fall through to inputMethod check
+        }
+
+        try {
+            return Main.inputMethod?.content_purpose === PASSWORD_PURPOSE;
+        } catch (e) {
             return false;
         }
-        return false;
     }
 
     _maybeHandleEvent(event) {
