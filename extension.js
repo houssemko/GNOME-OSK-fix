@@ -147,17 +147,20 @@ export default class OskFixExtension extends Extension {
         this._prevVisible = visible;
         const requested = !!(kbd && kbd._keyboardRequested);
 
-        if (this._prevInputFocus !== null && this._prevInputFocus !== focus) {
+        // Track focus CHANGE like native does
+        const focusChanged = this._prevInputFocus !== null && this._prevInputFocus !== focus;
+        if (focusChanged) {
             this._prevInputFocus = null;
         }
 
         if (hasFocus && actorExists) {
-            if (!this._prevInputFocus) {
+            const isNewFocus = !this._prevInputFocus;
+            if (isNewFocus) {
                 this._prevInputFocus = focus;
             }
 
-            // Don't auto-open if user explicitly hid via keyboard button
-            if (!visible && !requested && !this._userHidden && !this._hideButtonPressed) {
+            // Only auto-open on NEW focus (mimics native _onKeyFocusChanged behavior)
+            if (!visible && !requested && isNewFocus && !this._userHidden && !this._hideButtonPressed) {
                 if (this._isPasswordFocused()) return;
                 Main.keyboard.open(Main.layoutManager.focusIndex);
             }
