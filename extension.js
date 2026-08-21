@@ -20,6 +20,7 @@ export default class OskFixExtension extends Extension {
         this._userHidden = false;
         this._hideButtonPressed = false;
         this._lastPointerPressTime = 0;
+        this._lastCursorMoveTime = 0;
         this._prevInputFocus = null;
         this._prevVisible = false;
 
@@ -28,6 +29,7 @@ export default class OskFixExtension extends Extension {
         this._originalLastDeviceIsTouchscreen = null;
         this._visibilitySignalId = 0;
         this._capturedEventHandlerId = 0;
+        this._cursorLocationSignalId = 0;
 
         // Conditional a11y override - needed when no touchscreen means
         // touch_mode is false and the Keyboard object is never created.
@@ -62,6 +64,15 @@ export default class OskFixExtension extends Extension {
             'captured-event',
             (actor, event) => this._onCapturedEvent(actor, event)
         );
+
+        // Caret movement inside the focused editable - distinguishes
+        // "clicked inside a field" from "clicked a toolbar/button"
+        if (Main.inputMethod) {
+            this._cursorLocationSignalId = Main.inputMethod.connect(
+                'cursor-location-changed',
+                () => { this._lastCursorMoveTime = Date.now(); }
+            );
+        }
 
         this._startPolling();
     }
@@ -154,9 +165,18 @@ export default class OskFixExtension extends Extension {
                 ? Date.now() - this._lastPointerPressTime : Infinity;
             const wasUserInitiated = timeSinceInteraction < INTERACT_GUARD_MS;
 
-            // Open on: focus change to new editable, OR recent click on
-            // the already-focused field (same-field reclick after hide).
-            if (!visible && !requested && (focusChanged || wasUserInitiated) &&
+            // Caret moved recently? Clicking inside a field moves the caret;
+            // clicking a toolbar/button does not. Prevents toolbar clicks
+            // from reopening the OSK while a field is focused.
+            const timeSinceCaretMove = this._lastCursorMoveTime > 0
+                ? Date.now() - this._lastCursorMoveTime : Infinity;
+            const recentCaretMove = timeSinceCaretMove < INTERACT_GUARD_MS;
+
+            // Open on: focus change to a new editable (click-gated), OR
+            // same-field reclick (needs click + caret move as proof).
+            if (!visible && !requested &&
+                ((focusChanged && wasUserInitiated) ||
+                 (!focusChanged && wasUserInitiated && recentCaretMove)) &&
                 !this._userHidden && !this._hideButtonPressed) {
                 if (!this._isPasswordFocused()) {
                     Main.keyboard.open(Main.layoutManager.focusIndex);
@@ -256,6 +276,11 @@ export default class OskFixExtension extends Extension {
         if (this._capturedEventHandlerId) {
             global.stage.disconnect(this._capturedEventHandlerId);
             this._capturedEventHandlerId = 0;
+        }
+
+        if (this._cursorLocationSignalId && Main.inputMethod) {
+            Main.inputMethod.disconnect(this._cursorLocationSignalId);
+            this._cursorLocationSignalId = 0;
         }
 
         if (this._visibilitySignalId && Main.keyboard) {
