@@ -148,7 +148,10 @@ export default class OskFixExtension extends Extension {
                 this._prevInputFocus = focus;
             }
 
-            if (!visible && !requested && isNewFocus && !this._userHidden && !this._hideButtonPressed) {
+            const recentClick = this._lastPointerPressTime > 0 && (Date.now() - this._lastPointerPressTime) < 500;
+
+            // Open on: focus change OR recent click on text field
+            if (!visible && !requested && (isNewFocus || recentClick) && !this._userHidden && !this._hideButtonPressed) {
                 if (this._isPasswordFocused()) return;
                 Main.keyboard.open(Main.layoutManager.focusIndex);
             }
