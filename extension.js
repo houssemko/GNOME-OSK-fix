@@ -18,13 +18,11 @@ const POINTER_PRESS_TYPES = new Set([
 ]);
 const PASSWORD_PURPOSE = Clutter.InputContentPurpose.PASSWORD;
 
-export default class NativeOSKAutoShowWrap extends Extension {
+export default class OskFixExtension extends Extension {
     enable() {
-        this._settings = this.getSettings();
         this._pollId = 0;
         this._oldMaybeHandleEvent = null;
         this._originalLastDeviceIsTouchscreen = null;
-        this._settingsChangedId = 0;
 
         this._lastPointerPressTime = 0;
         this._prevVisible = false;
@@ -40,37 +38,14 @@ export default class NativeOSKAutoShowWrap extends Extension {
         this._oldEnabled = this._a11y.get_boolean('screen-keyboard-enabled');
         this._a11y.set_boolean('screen-keyboard-enabled', true);
 
-        console.debug(`[native-osk-autoshow-wrap] enabled: open-mode=${this._settings.get_string('open-mode')} force-touch-mode=${this._settings.get_boolean('force-touch-mode')}`);
+        this._originalLastDeviceIsTouchscreen =
+            KeyboardManager.prototype._lastDeviceIsTouchscreen;
+        KeyboardManager.prototype._lastDeviceIsTouchscreen = () => true;
 
-        if (this._settings.get_boolean('force-touch-mode')) {
-            this._originalLastDeviceIsTouchscreen =
-                KeyboardManager.prototype._lastDeviceIsTouchscreen;
-            KeyboardManager.prototype._lastDeviceIsTouchscreen =
-                () => true;
-        }
-
-        // React live to force-touch-mode being toggled in prefs without
-        // requiring the extension to be disabled/re-enabled.
-        this._settingsChangedId = this._settings.connect('changed::force-touch-mode', () => {
-            if (this._settings.get_boolean('force-touch-mode')) {
-                if (!this._originalLastDeviceIsTouchscreen) {
-                    this._originalLastDeviceIsTouchscreen =
-                        KeyboardManager.prototype._lastDeviceIsTouchscreen;
-                    KeyboardManager.prototype._lastDeviceIsTouchscreen = () => true;
-                }
-            } else if (this._originalLastDeviceIsTouchscreen) {
-                KeyboardManager.prototype._lastDeviceIsTouchscreen =
-                    this._originalLastDeviceIsTouchscreen;
-                this._originalLastDeviceIsTouchscreen = null;
-            }
-        });
-
-        // Listen for both "captured-event" (X11) and "button-press-event" (Wayland)
         this._capturedEventHandlerId = global.stage.connect(
             'captured-event',
             (actor, event) => this._onCapturedEvent(actor, event)
         );
-        // Wayland does not emit captured-event for mouse clicks, so also hook the raw button-press signal
         this._buttonPressHandlerId = global.stage.connect(
             'button-press-event',
             (actor, event) => this._onCapturedEvent(actor, event)
@@ -102,24 +77,13 @@ export default class NativeOSKAutoShowWrap extends Extension {
             if (!actor || !this._actorIsText(actor))
                 return false;
 
-            const mode = this._settings.get_string('open-mode');
             const evType = event.type();
-
-            let shouldOpen = false;
-            if (mode === 'always') {
-                shouldOpen = true;
-            } else if (mode === 'click') {
-                shouldOpen = evType === Clutter.EventType.BUTTON_PRESS ||
-                             TOUCH_EVENT_TYPES.has(evType);
-            } else {
-                shouldOpen = TOUCH_EVENT_TYPES.has(evType);
-            }
+            const shouldOpen = TOUCH_EVENT_TYPES.has(evType);
 
             if (!shouldOpen)
                 return false;
 
-            if (this._settings.get_boolean('ignore-password-fields') &&
-                this._isPasswordFocused())
+            if (this._isPasswordFocused())
                 return false;
 
             if (!Main.keyboard.visible)
@@ -128,15 +92,13 @@ export default class NativeOSKAutoShowWrap extends Extension {
             return false;
         };
 
-        if (this._settings.get_boolean('enable-poll')) {
-            this._pollId = GLib.timeout_add(
-                GLib.PRIORITY_DEFAULT, POLL_INTERVAL_MS, () => {
-                    this._poll();
-                    return GLib.SOURCE_CONTINUE;
-                });
-            GLib.Source.set_name_by_id(this._pollId,
-                '[native-osk-autoshow-wrap] poll');
-        }
+        this._pollId = GLib.timeout_add(
+            GLib.PRIORITY_DEFAULT, POLL_INTERVAL_MS, () => {
+                this._poll();
+                return GLib.SOURCE_CONTINUE;
+            });
+        GLib.Source.set_name_by_id(this._pollId,
+            '[osk-fix] poll');
     }
 
     _onCapturedEvent(actor, event) {
@@ -174,11 +136,6 @@ export default class NativeOSKAutoShowWrap extends Extension {
             this._oldMaybeHandleEvent = null;
         }
 
-        if (this._settingsChangedId) {
-            this._settings.disconnect(this._settingsChangedId);
-            this._settingsChangedId = 0;
-        }
-
         if (this._originalLastDeviceIsTouchscreen) {
             KeyboardManager.prototype._lastDeviceIsTouchscreen =
                 this._originalLastDeviceIsTouchscreen;
@@ -192,8 +149,6 @@ export default class NativeOSKAutoShowWrap extends Extension {
 
         if (Main.keyboard && Main.keyboard.visible)
             Main.keyboard.close();
-
-        this._settings = null;
     }
 
     _poll() {
@@ -227,22 +182,10 @@ export default class NativeOSKAutoShowWrap extends Extension {
             if (!this._prevInputFocus)
                 this._prevInputFocus = focus;
 
-            const mode = this._settings.get_string('open-mode');
-            const now = Date.now();
-            if (mode === 'always' && !visible && !requested) {
-                if (this._settings.get_boolean('ignore-password-fields') &&
-                    this._isPasswordFocused())
+            if (!visible && !requested) {
+                if (this._isPasswordFocused())
                     return;
                 Main.keyboard.open(Main.layoutManager.focusIndex);
-            } else if (mode === 'click' && !visible && !requested) {
-                const threshold = this._settings.get_int('click-threshold-ms');
-                const recentClick = now - this._lastPointerPressTime < threshold;
-                if (recentClick) {
-                    if (this._settings.get_boolean('ignore-password-fields') &&
-                        this._isPasswordFocused())
-                        return;
-                    Main.keyboard.open(Main.layoutManager.focusIndex);
-                }
             }
         } else if (!hasFocus && visible) {
             Main.keyboard.close();
