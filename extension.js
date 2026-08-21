@@ -11,7 +11,7 @@ const POINTER_PRESS_TYPES = new Set([
 ]);
 const PASSWORD_PURPOSE = Clutter.InputContentPurpose.PASSWORD;
 const IDLE_POLL_LIMIT = 10; // Stop polling after ~3s of inactivity
-const INTERACT_GUARD_MS = 400; // Focus/caret events must follow a click within this window
+const INTERACT_GUARD_MS = 700; // Focus/caret events must follow a click within this window
 
 export default class OskFixExtension extends Extension {
     enable() {
