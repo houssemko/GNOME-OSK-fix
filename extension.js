@@ -96,9 +96,11 @@ export default class OskFixExtension extends Extension {
             return;
         }
 
-        // Any pointer press reactivates polling. Explicit-hide state is
-        // lifted ONLY on focus change in _adaptivePoll - keeps behavior
-        // uniform across toolkits (Wayland actors aren't Clutter.Text).
+        // Any pointer press outside the keyboard signals user intent:
+        // lift explicit-hide state and reactivate polling. Toolkit-
+        // independent (Wayland actors aren't Clutter.Text).
+        this._userHidden = false;
+        this._hideButtonPressed = false;
         this._startPolling();
     }
 
@@ -145,15 +147,16 @@ export default class OskFixExtension extends Extension {
         }
 
         if (hasFocus) {
-            // Interactivity guard: focus change must be preceded by an
-            // explicit click/touch within INTERACT_GUARD_MS. Programmatic
-            // autofocus (app launch, .grab_focus()) has no preceding pointer
-            // event and stays suppressed.
+            // Interactivity guard: any open requires a click/touch within
+            // INTERACT_GUARD_MS. Programmatic autofocus (no pointer event)
+            // stays suppressed.
             const timeSinceInteraction = this._lastPointerPressTime > 0
                 ? Date.now() - this._lastPointerPressTime : Infinity;
             const wasUserInitiated = timeSinceInteraction < INTERACT_GUARD_MS;
 
-            if (!visible && !requested && focusChanged && wasUserInitiated &&
+            // Open on: focus change to new editable, OR recent click on
+            // the already-focused field (same-field reclick after hide).
+            if (!visible && !requested && (focusChanged || wasUserInitiated) &&
                 !this._userHidden && !this._hideButtonPressed) {
                 if (!this._isPasswordFocused()) {
                     Main.keyboard.open(Main.layoutManager.focusIndex);
