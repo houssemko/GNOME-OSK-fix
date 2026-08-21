@@ -96,14 +96,10 @@ export default class OskFixExtension extends Extension {
             return;
         }
 
-        // Any pointer press reactivates polling...
+        // Any pointer press reactivates polling. Explicit-hide state is
+        // lifted ONLY on focus change in _adaptivePoll - keeps behavior
+        // uniform across toolkits (Wayland actors aren't Clutter.Text).
         this._startPolling();
-
-        // ...but only a press on a text field clears the explicit-hide state
-        if (this._actorIsText(actor)) {
-            this._userHidden = false;
-            this._hideButtonPressed = false;
-        }
     }
 
     _adaptivePoll() {
