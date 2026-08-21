@@ -21,8 +21,6 @@ export default class OskFixExtension extends Extension {
         this._signalIds = [];
         this._didOverrideOsk = false;
         this._lastPointerPressTime = 0;
-        this._prevKeyFocusActor = null;
-        this._prevInputFocus = null;
 
         this._a11y = new Gio.Settings({ schema_id: 'org.gnome.desktop.a11y.applications' });
         this._originalOskEnabled = this._a11y.get_boolean('screen-keyboard-enabled');
@@ -37,13 +35,6 @@ export default class OskFixExtension extends Extension {
             Main.keyboard._lastDeviceIsTouchscreen = () => true;
         }
 
-        if (Main.inputMethod) {
-            this._signalIds.push([
-                Main.inputMethod,
-                Main.inputMethod.connect('notify::current-focus', () => this._onFocusChange())
-            ]);
-        }
-
         this._signalIds.push([
             global.stage,
             global.stage.connect('captured-event', (actor, event) => this._onCapturedEvent(actor, event))
@@ -54,21 +45,8 @@ export default class OskFixExtension extends Extension {
             global.stage.connect('button-press-event', (actor, event) => this._onCapturedEvent(actor, event))
         ]);
 
-        try {
-            this._signalIds.push([
-                global.stage,
-                global.stage.connect('notify::key-focus', () => this._onKeyFocusChange())
-            ]);
-        } catch (e) {
-            console.error('[osk-fix] Failed to connect key-focus signal:', e);
-        }
-
-        if (Main.overview) {
-            this._signalIds.push([
-                Main.overview,
-                Main.overview.connect('hidden', () => this._onFocusChange())
-            ]);
-        }
+        this._oldMaybeHandleEvent = Main.keyboard.maybeHandleEvent;
+        Main.keyboard.maybeHandleEvent = (event) => this._maybeHandleEvent(event);
     }
 
     disable() {
@@ -90,6 +68,11 @@ export default class OskFixExtension extends Extension {
             this._originalLastDeviceIsTouchscreen = undefined;
         }
 
+        if (this._oldMaybeHandleEvent) {
+            Main.keyboard.maybeHandleEvent = this._oldMaybeHandleEvent;
+            this._oldMaybeHandleEvent = null;
+        }
+
         if (this._didOverrideOsk && this._a11y) {
             this._a11y.set_boolean('screen-keyboard-enabled', this._originalOskEnabled);
             this._didOverrideOsk = false;
@@ -108,48 +91,27 @@ export default class OskFixExtension extends Extension {
         }
     }
 
-    _onKeyFocusChange() {
-        const focusActor = global.stage.key_focus;
-        if (focusActor && this._actorIsText(focusActor) && !this._prevKeyFocusActor) {
-            this._lastPointerPressTime = Date.now();
+    _maybeHandleEvent(event) {
+        const handled = this._oldMaybeHandleEvent.call(Main.keyboard, event);
+        if (handled) return true;
+
+        if (!Main.keyboard || !Main.keyboard._keyboard) return false;
+
+        const actor = global.stage.get_event_actor(event);
+        if (!actor || !this._actorIsText(actor)) return false;
+
+        const evType = event.type();
+        const shouldOpen = TOUCH_EVENT_TYPES.has(evType);
+
+        if (!shouldOpen) return false;
+
+        if (this._isPasswordFocused()) return false;
+
+        if (!Main.keyboard.visible) {
+            Main.keyboard.open(Main.layoutManager.focusIndex);
         }
-        this._prevKeyFocusActor = focusActor;
-    }
 
-    _onFocusChange() {
-        if (!Main.keyboard || !Main.keyboard._keyboard) return;
-
-        const focus = Main.inputMethod?.currentFocus;
-        let hasFocus = false;
-        if (focus) {
-            try {
-                hasFocus = !!focus.is_focused();
-            } catch (e) {
-                hasFocus = !!focus;
-            }
-        }
-
-        const visible = Main.keyboard.visible;
-
-        if (hasFocus) {
-            if (!this._prevInputFocus) {
-                this._prevInputFocus = focus;
-            }
-
-            if (!visible) {
-                if (this._isPasswordFocused()) return;
-
-                const now = Date.now();
-                const recentTouch = this._lastPointerPressTime > 0 && (now - this._lastPointerPressTime) < 1000;
-
-                if (recentTouch) {
-                    Main.keyboard.open(Main.layoutManager.focusIndex);
-                }
-            }
-        } else if (!hasFocus && visible) {
-            Main.keyboard.close();
-            this._prevInputFocus = focus;
-        }
+        return false;
     }
 
     _actorIsText(actor) {
