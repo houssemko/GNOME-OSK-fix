@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.native-osk-autoshow-wrap" path="/org/gnome/shell/extensions/native-osk-autoshow-wrap/">
+    <key name="open-mode" type="s">
+      <default>'touch'</default>
+      <summary>When to open the OSK</summary>
+      <description>
+        "touch" = open on touch/tap events over a Clutter.Text actor.
+        "click" = open on any pointer button-press over a Clutter.Text actor.
+        "always" = open whenever Main.inputMethod.currentFocus is set, regardless of input device.
+      </description>
+    </key>
+    <key name="enable-poll" type="b">
+      <default>true</default>
+      <summary>Poll Main.inputMethod.currentFocus</summary>
+      <description>
+        When true, poll every 300ms. In "Always" mode: opens/closes on IM focus. In "Click" or "Touch" mode: only closes on focus loss (open is triggered by click/touch events). Catches apps that never raise input-panel-state.
+      </description>
+    </key>
+    <key name="force-touch-mode" type="b">
+      <default>true</default>
+      <summary>Force KeyboardManager._lastDeviceIsTouchscreen to return true</summary>
+      <description>
+        Patches the native KeyboardManager so the OSK is enabled even on sessions where no touchscreen was detected.
+      </description>
+    </key>
+    <key name="ignore-password-fields" type="b">
+      <default>true</default>
+      <summary>Don't open the OSK for password fields</summary>
+      <description>
+        Avoid opening the OSK on input-purpose PASSWORD fields, letting the native panel-state behaviour handle those.
+      </description>
+    </key>
+    <key name="click-threshold-ms" type="i">
+      <default>2000</default>
+      <summary>Max delay between click and text-field focus in "click" mode</summary>
+      <description>
+        In "click" mode the OSK opens when a text field gains input-method focus within
+        this many milliseconds of a pointer press. XWayland apps (Chromium, Vivaldi)
+        can take 1-2s to report IM focus after a click, so the old 500ms window was
+        too short. Tune up if your apps are slower, down to avoid opening after
+        click-then-Tab sequences.
+      </description>
+    </key>
+  </schema>
+</schemalist>

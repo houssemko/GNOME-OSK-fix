@@ -1,0 +1,12 @@
+{
+    "uuid": "native-osk-autoshow-wrap@local",
+    "name": "Native OSK Auto-Show Wrap",
+    "description": "Wraps the native GNOME on-screen keyboard so it appears in any app, including Chromium/Vivaldi/Firefox under XWayland. Hooks maybeHandleEvent, polls Main.inputMethod.currentFocus, and forces _lastDeviceIsTouchscreen to true.",
+    "settings-schema": "org.gnome.shell.extensions.native-osk-autoshow-wrap",
+    "shell-version": [
+        "49",
+        "50"
+    ],
+    "version-name": "1.0",
+    "version": "1.1"
+}
