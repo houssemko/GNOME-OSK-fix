@@ -11,14 +11,14 @@ const POINTER_PRESS_TYPES = new Set([
 ]);
 const PASSWORD_PURPOSE = Clutter.InputContentPurpose.PASSWORD;
 const IDLE_POLL_LIMIT = 10; // Stop polling after ~3s of inactivity
-const INTERACT_GUARD_MS = 400; // Focus change must follow a click within this window
+const INTERACT_GUARD_MS = 400; // Focus/caret events must follow a click within this window
 
 export default class OskFixExtension extends Extension {
     enable() {
         this._pollId = 0;
         this._idleTicks = 0;
         this._userHidden = false;
-        this._hideButtonPressed = false;
+        this._hiddenFocusObject = null;
         this._lastPointerPressTime = 0;
         this._lastCursorMoveTime = 0;
         this._prevInputFocus = null;
@@ -33,7 +33,6 @@ export default class OskFixExtension extends Extension {
 
         // Conditional a11y override - needed when no touchscreen means
         // touch_mode is false and the Keyboard object is never created.
-        // Only set if disabled; always restored in disable().
         this._a11y = new Gio.Settings({ schema_id: 'org.gnome.desktop.a11y.applications' });
         this._originalOskEnabled = this._a11y.get_boolean('screen-keyboard-enabled');
         if (!this._originalOskEnabled) {
@@ -45,10 +44,13 @@ export default class OskFixExtension extends Extension {
             this._originalLastDeviceIsTouchscreen = Main.keyboard._lastDeviceIsTouchscreen;
             Main.keyboard._lastDeviceIsTouchscreen = () => true;
 
+            // Track explicit hide: keyboard hidden while an editable still
+            // holds input focus. Catches hide button AND drag-down gesture.
             this._visibilitySignalId = Main.keyboard.connect('visibility-changed', () => {
-                if (!Main.keyboard.visible && this._hideButtonPressed) {
+                const currentFocus = Main.inputMethod?.currentFocus;
+                if (!Main.keyboard.visible && currentFocus) {
                     this._userHidden = true;
-                    this._hideButtonPressed = false;
+                    this._hiddenFocusObject = currentFocus;
                 }
             });
 
@@ -59,7 +61,7 @@ export default class OskFixExtension extends Extension {
             }
         }
 
-        // Intercept stage pointer events to reactivate polling
+        // Track user interaction window
         this._capturedEventHandlerId = global.stage.connect(
             'captured-event',
             (actor, event) => this._onCapturedEvent(actor, event)
@@ -98,20 +100,6 @@ export default class OskFixExtension extends Extension {
         if (!POINTER_PRESS_TYPES.has(event.type())) return;
 
         this._lastPointerPressTime = Date.now();
-
-        const keyboardActor = Main.keyboard?._keyboard;
-        if (keyboardActor && this._isInsideKeyboard(actor, keyboardActor)) {
-            if (this._isHideButton(actor)) {
-                this._hideButtonPressed = true;
-            }
-            return;
-        }
-
-        // Any pointer press outside the keyboard signals user intent:
-        // lift explicit-hide state and reactivate polling. Toolkit-
-        // independent (Wayland actors aren't Clutter.Text).
-        this._userHidden = false;
-        this._hideButtonPressed = false;
         this._startPolling();
     }
 
@@ -145,45 +133,53 @@ export default class OskFixExtension extends Extension {
             this._prevInputFocus = focus;
             this._idleTicks = 0;
 
-            // Focus moved to a different editable - lift explicit-hide state.
-            // Toolkit-independent (works for Wayland apps whose actors aren't
-            // Clutter.Text). Safe against hide-button races: pressing hide
-            // never changes input-method focus.
-            if (hasFocus) {
+            // Per-field hide memory: hidden state persists only for the
+            // field it was hidden on; switching fields lifts it.
+            if (focus !== this._hiddenFocusObject) {
                 this._userHidden = false;
-                this._hideButtonPressed = false;
+                this._hiddenFocusObject = null;
             }
         } else {
             this._idleTicks++;
         }
 
         if (hasFocus) {
-            // Interactivity guard: any open requires a click/touch within
-            // INTERACT_GUARD_MS. Programmatic autofocus (no pointer event)
-            // stays suppressed.
+            // Interactivity guard: opens require a click/touch within
+            // INTERACT_GUARD_MS. Programmatic autofocus stays suppressed.
             const timeSinceInteraction = this._lastPointerPressTime > 0
                 ? Date.now() - this._lastPointerPressTime : Infinity;
             const wasUserInitiated = timeSinceInteraction < INTERACT_GUARD_MS;
 
             // Caret moved recently? Clicking inside a field moves the caret;
-            // clicking a toolbar/button does not. Prevents toolbar clicks
-            // from reopening the OSK while a field is focused.
+            // clicking a toolbar/button does not.
             const timeSinceCaretMove = this._lastCursorMoveTime > 0
                 ? Date.now() - this._lastCursorMoveTime : Infinity;
             const recentCaretMove = timeSinceCaretMove < INTERACT_GUARD_MS;
 
-            // Open on: focus change to a new editable (click-gated), OR
-            // same-field reclick (needs click + caret move as proof).
-            if (!visible && !requested &&
-                ((focusChanged && wasUserInitiated) ||
-                 (!focusChanged && wasUserInitiated && recentCaretMove)) &&
-                !this._userHidden && !this._hideButtonPressed) {
+            const newFieldOpen = focusChanged && wasUserInitiated;
+            const sameFieldReopen = !focusChanged && wasUserInitiated && recentCaretMove;
+
+            let shouldOpen = false;
+            if (newFieldOpen) {
+                // Respect per-field hide when landing on the hidden field itself
+                shouldOpen = !this._userHidden;
+            } else if (sameFieldReopen) {
+                // Explicit physical interaction (click + caret move) is
+                // stronger intent than a previous hide - always reopen.
+                shouldOpen = true;
+                this._userHidden = false;
+                this._hiddenFocusObject = null;
+            }
+
+            if (shouldOpen && !visible && !requested) {
                 if (!this._isPasswordFocused()) {
                     Main.keyboard.open(Main.layoutManager.focusIndex);
                 }
             }
         } else if (!hasFocus && visible) {
             Main.keyboard.close();
+            this._userHidden = false;
+            this._hiddenFocusObject = null;
         }
 
         // Adaptive cleanup: stop polling when idle and keyboard is closed
@@ -227,8 +223,9 @@ export default class OskFixExtension extends Extension {
         const actor = global.stage.get_event_actor(event);
         if (!actor || !this._actorIsText(actor)) return false;
 
-        if (event.type() !== Clutter.EventType.BUTTON_PRESS &&
-            event.type() !== Clutter.EventType.TOUCH_BEGIN) return false;
+        const isPress = event.type() === Clutter.EventType.BUTTON_PRESS ||
+                        event.type() === Clutter.EventType.TOUCH_BEGIN;
+        if (!isPress) return false;
 
         if (this._isPasswordFocused()) return false;
 
@@ -236,28 +233,6 @@ export default class OskFixExtension extends Extension {
             Main.keyboard.open(Main.layoutManager.focusIndex);
         }
 
-        return false;
-    }
-
-    _isInsideKeyboard(actor, keyboardActor) {
-        let cur = actor;
-        while (cur) {
-            if (cur === keyboardActor) return true;
-            cur = cur.get_parent ? cur.get_parent() : null;
-        }
-        return false;
-    }
-
-    _isHideButton(actor) {
-        let cur = actor;
-        while (cur) {
-            const styleClass = cur.style_class;
-            if ((typeof styleClass === 'string' && styleClass.includes('hide-key')) ||
-                cur.icon_name === 'osk-hide-symbolic') {
-                return true;
-            }
-            cur = cur.get_parent ? cur.get_parent() : null;
-        }
         return false;
     }
 
