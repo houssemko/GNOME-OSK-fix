@@ -253,8 +253,7 @@ export default class OskFixExtension extends Extension {
             const recentClick = this._lastPointerPressTime > 0 && (Date.now() - this._lastPointerPressTime) < 500;
 
             if (DEBUG && recentClick && !visible) {
-                const hidden = this._userHidden || this._hideButtonPressed;
-                console.error(`[osk-fix] poll: recentClick w/ field focused, hidden=${hidden} req=${requested}`);
+                console.error(`[osk-fix] poll: recentClick w/ field focused, hidden=${this._isHidden()} req=${requested}`);
             }
 
             if (!visible && !requested && (isNewFocus || recentClick) && !this._userHidden && !this._hideButtonPressed) {
