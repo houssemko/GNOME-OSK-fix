@@ -1,7 +1,7 @@
 # OSK Fix
 
-A GNOME Shell extension that forces the native on-screen keyboard (OSK) to appear in applications that don't normally trigger it, including Chromium, Vivaldi, Firefox, Electron apps, and other XWayland applications.
-
+A GNOME Shell extension that forces the native on-screen keyboard (OSK) to appear in applications that don't normally trigger it, including Chromium, Vivaldi, Firefox, Electron apps,QT6 apps and other XWayland applications. 
+Only tested on Gnome 50.
 
 ### Manual Installation
 
