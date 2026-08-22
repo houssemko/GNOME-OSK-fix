@@ -8,7 +8,6 @@ import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 const POINTER_PRESS_TYPES = new Set([
     Clutter.EventType.BUTTON_PRESS,
 ]);
-const DEBUG = true; // TEMPORARY
 
 export default class OskFixExtension extends Extension {
     enable() {
@@ -88,8 +87,6 @@ export default class OskFixExtension extends Extension {
             }
         );
         GLib.Source.set_name_by_id(this._pollId, '[osk-fix] poll');
-
-        if (DEBUG) console.error('[osk-fix] DEBUG build enabled');
     }
 
     _onCapturedEvent(actor, event) {
@@ -97,7 +94,7 @@ export default class OskFixExtension extends Extension {
             if (!POINTER_PRESS_TYPES.has(event.type())) return;
 
             const keyboardActor = Main.keyboard?._keyboard;
-            
+
             // Handle OSK clicks first to prevent updating _lastPointerPressTime
             if (keyboardActor && this._isInsideKeyboard(actor, keyboardActor)) {
                 if (this._isHideButton(actor)) {
@@ -109,14 +106,11 @@ export default class OskFixExtension extends Extension {
 
             // Only record click time when tapping OUTSIDE the keyboard
             this._lastPointerPressTime = Date.now();
-            if (DEBUG) console.error(`[osk-fix] press outside OSK (${event.type()})`);
 
-            // Any press outside the OSK lifts the hidden state - that is the
-            // "reappear when I press the input field again" rule. Gating this
-            // on _actorIsText() made it unliftable in Wayland apps, whose
-            // window actors have no Clutter.Text ancestor.
-            this._userHidden = false;
-            this._hideButtonPressed = false;
+            if (this._actorIsText(actor)) {
+                this._userHidden = false;
+                this._hideButtonPressed = false;
+            }
         } catch (e) {
             console.error('[osk-fix] Error in captured event handler:', e);
         }
@@ -213,31 +207,10 @@ export default class OskFixExtension extends Extension {
                 this._prevInputFocus = focus;
             }
 
-            const timeSinceInteraction = this._lastPointerPressTime > 0
-                ? Date.now() - this._lastPointerPressTime : Infinity;
-            const recentClick = timeSinceInteraction < 500;
-            // Wider window for NEW focus commits: Vivaldi/Chromium commit
-            // Wayland text-input focus 1.5-3s after the click under load
-            // (empirically measured). Programmatic autofocus with NO click
-            // ever remains suppressed (Infinity).
-            const wasUserInitiated = timeSinceInteraction < 4000;
+            const recentClick = this._lastPointerPressTime > 0 && (Date.now() - this._lastPointerPressTime) < 500;
 
-            // Open when: a new editable gains focus shortly after a click
-            // (covers slow Wayland focus commits), OR the already-focused
-            // field is re-clicked. Tab/programmatic focus alone never opens.
-            if (DEBUG && timeSinceInteraction < 3000) {
-                const blocked = visible ? 'vis' : requested ? 'req' :
-                    this._userHidden ? 'uH' : this._hideButtonPressed ? 'hbp' :
-                    !(isNewFocus && wasUserInitiated) && !recentClick ? 'no-trigger' : '-';
-                console.error(`[osk-fix] tsi=${Math.round(timeSinceInteraction)} newF=${isNewFocus} ` +
-                    `recent=${recentClick} wUI=${wasUserInitiated} blocked=${blocked}`);
-            }
-
-            if (!visible && !requested &&
-                ((isNewFocus && wasUserInitiated) || recentClick) &&
-                !this._userHidden && !this._hideButtonPressed) {
+            if (!visible && !requested && (isNewFocus || recentClick) && !this._userHidden && !this._hideButtonPressed) {
                 Main.keyboard.open(Main.layoutManager.focusIndex);
-                if (DEBUG) console.error('[osk-fix] OPEN called');
             }
         } else if (!hasFocus && visible) {
             Main.keyboard.close();
@@ -315,5 +288,4 @@ export default class OskFixExtension extends Extension {
         }
         return false;
     }
-
 }
