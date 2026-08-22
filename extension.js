@@ -8,6 +8,7 @@ import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 const POINTER_PRESS_TYPES = new Set([
     Clutter.EventType.BUTTON_PRESS,
 ]);
+const DEBUG = true; // TEMPORARY
 
 export default class OskFixExtension extends Extension {
     enable() {
@@ -87,6 +88,8 @@ export default class OskFixExtension extends Extension {
             }
         );
         GLib.Source.set_name_by_id(this._pollId, '[osk-fix] poll');
+
+        if (DEBUG) console.error('[osk-fix] DEBUG build enabled');
     }
 
     _onCapturedEvent(actor, event) {
@@ -106,6 +109,7 @@ export default class OskFixExtension extends Extension {
 
             // Only record click time when tapping OUTSIDE the keyboard
             this._lastPointerPressTime = Date.now();
+            if (DEBUG) console.error(`[osk-fix] press outside OSK (${event.type()})`);
 
             // Any press outside the OSK lifts the hidden state - that is the
             // "reappear when I press the input field again" rule. Gating this
@@ -219,10 +223,19 @@ export default class OskFixExtension extends Extension {
             // Open when: a new editable gains focus shortly after a click
             // (covers slow Wayland focus commits), OR the already-focused
             // field is re-clicked. Tab/programmatic focus alone never opens.
+            if (DEBUG && timeSinceInteraction < 3000) {
+                const blocked = visible ? 'vis' : requested ? 'req' :
+                    this._userHidden ? 'uH' : this._hideButtonPressed ? 'hbp' :
+                    !(isNewFocus && wasUserInitiated) && !recentClick ? 'no-trigger' : '-';
+                console.error(`[osk-fix] tsi=${Math.round(timeSinceInteraction)} newF=${isNewFocus} ` +
+                    `recent=${recentClick} wUI=${wasUserInitiated} blocked=${blocked}`);
+            }
+
             if (!visible && !requested &&
                 ((isNewFocus && wasUserInitiated) || recentClick) &&
                 !this._userHidden && !this._hideButtonPressed) {
                 Main.keyboard.open(Main.layoutManager.focusIndex);
+                if (DEBUG) console.error('[osk-fix] OPEN called');
             }
         } else if (!hasFocus && visible) {
             Main.keyboard.close();
