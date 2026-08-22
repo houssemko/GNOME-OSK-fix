@@ -27,6 +27,8 @@ export default class OskFixExtension extends Extension {
         this._buttonPressHandlerId = 0;
         this._keyFocusHandlerId = 0;
         this._didOverrideOsk = false;
+        this._originalOpen = null;
+        this._openWrapper = null;
 
         this._a11y = new Gio.Settings({ schema_id: 'org.gnome.desktop.a11y.applications' });
         this._originalOskEnabled = this._a11y.get_boolean('screen-keyboard-enabled');
@@ -54,6 +56,17 @@ export default class OskFixExtension extends Extension {
                 this._maybeHandleEventWrapper = (event) => this._maybeHandleEvent(event);
                 Main.keyboard.maybeHandleEvent = this._maybeHandleEventWrapper;
             }
+
+            // Gate ALL open() paths - including GNOME's internal ones
+            // (input-panel state changes, key-focus idle show). Without
+            // this, native reopen ignores our hidden state entirely.
+            this._originalOpen = Main.keyboard.open;
+            const ext = this;
+            this._openWrapper = function (...args) {
+                if (ext._userHidden || ext._hideButtonPressed) return;
+                return ext._originalOpen.apply(this, args);
+            };
+            Main.keyboard.open = this._openWrapper;
         } else {
             console.error('[osk-fix] Main.keyboard not available at enable');
         }
@@ -107,10 +120,11 @@ export default class OskFixExtension extends Extension {
             // Only record click time when tapping OUTSIDE the keyboard
             this._lastPointerPressTime = Date.now();
 
-            if (this._actorIsText(actor)) {
-                this._userHidden = false;
-                this._hideButtonPressed = false;
-            }
+            // Any press outside the OSK is user intent - lift hidden state
+            // unconditionally. Gating on _actorIsText() made it unliftable
+            // in Wayland apps (no Clutter.Text ancestors).
+            this._userHidden = false;
+            this._hideButtonPressed = false;
         } catch (e) {
             console.error('[osk-fix] Error in captured event handler:', e);
         }
@@ -254,6 +268,13 @@ export default class OskFixExtension extends Extension {
         this._oldMaybeHandleEvent = null;
         this._maybeHandleEventWrapper = null;
 
+        if (this._originalOpen && Main.keyboard &&
+            Main.keyboard.open === this._openWrapper) {
+            Main.keyboard.open = this._originalOpen;
+        }
+        this._originalOpen = null;
+        this._openWrapper = null;
+
         if (Main.keyboard && this._originalLastDeviceIsTouchscreen !== undefined) {
             Main.keyboard._lastDeviceIsTouchscreen = this._originalLastDeviceIsTouchscreen;
             this._originalLastDeviceIsTouchscreen = undefined;
@@ -262,6 +283,8 @@ export default class OskFixExtension extends Extension {
         if (this._didOverrideOsk && this._a11y) {
             this._a11y.set_boolean('screen-keyboard-enabled', this._originalOskEnabled);
             this._didOverrideOsk = false;
+        this._originalOpen = null;
+        this._openWrapper = null;
         }
 
         this._a11y = null;
