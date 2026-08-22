@@ -27,6 +27,8 @@ export default class OskFixExtension extends Extension {
         this._buttonPressHandlerId = 0;
         this._keyFocusHandlerId = 0;
         this._didOverrideOsk = false;
+        this._originalOpen = null;
+        this._openWrapper = null;
 
         this._a11y = new Gio.Settings({ schema_id: 'org.gnome.desktop.a11y.applications' });
         this._originalOskEnabled = this._a11y.get_boolean('screen-keyboard-enabled');
@@ -54,6 +56,18 @@ export default class OskFixExtension extends Extension {
                 this._maybeHandleEventWrapper = (event) => this._maybeHandleEvent(event);
                 Main.keyboard.maybeHandleEvent = this._maybeHandleEventWrapper;
             }
+
+            // Gate ALL open() paths. GNOME's internal reopen calls (input
+            // panel state changes when the client re-commits text-input,
+            // key-focus idle show) ignore our hidden state entirely -
+            // without this, the OSK reopens instantly after hide.
+            this._originalOpen = Main.keyboard.open;
+            const ext = this;
+            this._openWrapper = function (...args) {
+                if (ext._userHidden || ext._hideButtonPressed) return;
+                return ext._originalOpen.apply(this, args);
+            };
+            Main.keyboard.open = this._openWrapper;
         } else {
             console.error('[osk-fix] Main.keyboard not available at enable');
         }
@@ -254,6 +268,13 @@ export default class OskFixExtension extends Extension {
         }
         this._oldMaybeHandleEvent = null;
         this._maybeHandleEventWrapper = null;
+
+        if (this._originalOpen && Main.keyboard &&
+            Main.keyboard.open === this._openWrapper) {
+            Main.keyboard.open = this._originalOpen;
+        }
+        this._originalOpen = null;
+        this._openWrapper = null;
 
         if (Main.keyboard && this._originalLastDeviceIsTouchscreen !== undefined) {
             Main.keyboard._lastDeviceIsTouchscreen = this._originalLastDeviceIsTouchscreen;
