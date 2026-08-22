@@ -18,7 +18,6 @@ export default class OskFixExtension extends Extension {
         this._userHidden = false;
         this._visibilitySignalId = 0;
         this._hideButtonPressed = false;
-        this._weClosedIt = false;
 
         this._lastPointerPressTime = 0;
         this._prevVisible = false;
@@ -28,8 +27,6 @@ export default class OskFixExtension extends Extension {
         this._buttonPressHandlerId = 0;
         this._keyFocusHandlerId = 0;
         this._didOverrideOsk = false;
-        this._originalOpen = null;
-        this._openWrapper = null;
 
         this._a11y = new Gio.Settings({ schema_id: 'org.gnome.desktop.a11y.applications' });
         this._originalOskEnabled = this._a11y.get_boolean('screen-keyboard-enabled');
@@ -43,33 +40,20 @@ export default class OskFixExtension extends Extension {
             this._originalLastDeviceIsTouchscreen = Main.keyboard._lastDeviceIsTouchscreen;
             Main.keyboard._lastDeviceIsTouchscreen = () => true;
 
-            // We don't rely on identifying the hide-button actor to know the
-            // OSK was manually dismissed. If visibility flips to false while
-            // the input field STILL has focus, and it wasn't our own
-            // poll-driven close (see _poll's focus-loss branch), the only
-            // thing that can have closed it is the user (hide key, Esc,
-            // swipe, etc). This is actor-hierarchy independent, so it keeps
-            // working even where _isHideButton()'s heuristics don't match
-            // the real widget tree (seen on some Wayland OSK layouts).
-            this._visibilitySignalId = Main.keyboard.connect(
-                'visibility-changed', () => this._onVisibilityChanged());
+            this._visibilitySignalId = Main.keyboard.connect('visibility-changed', () => {
+                if (!Main.keyboard.visible) {
+                    if (this._hideButtonPressed) {
+                        this._userHidden = true;
+                        this._hideButtonPressed = false;
+                    }
+                }
+            });
 
             if (typeof Main.keyboard.maybeHandleEvent === 'function') {
                 this._oldMaybeHandleEvent = Main.keyboard.maybeHandleEvent;
                 this._maybeHandleEventWrapper = (event) => this._maybeHandleEvent(event);
                 Main.keyboard.maybeHandleEvent = this._maybeHandleEventWrapper;
             }
-
-            // Gate ALL open() paths - including GNOME's internal ones
-            // (input-panel state changes, key-focus idle show). Without
-            // this, native reopen ignores our hidden state entirely.
-            this._originalOpen = Main.keyboard.open;
-            const ext = this;
-            this._openWrapper = function (...args) {
-                if (ext._isHidden()) return;
-                return ext._originalOpen.apply(this, args);
-            };
-            Main.keyboard.open = this._openWrapper;
         } else {
             console.error('[osk-fix] Main.keyboard not available at enable');
         }
@@ -105,64 +89,17 @@ export default class OskFixExtension extends Extension {
         GLib.Source.set_name_by_id(this._pollId, '[osk-fix] poll');
     }
 
-    // --- hidden-state helpers -------------------------------------------
-
-    _isHidden() {
-        return this._userHidden || this._hideButtonPressed;
-    }
-
-    _clearHidden() {
-        this._userHidden = false;
-        this._hideButtonPressed = false;
-    }
-
-    _markHiddenByUser() {
-        this._userHidden = true;
-        this._hideButtonPressed = true;
-    }
-
-    _onVisibilityChanged() {
-        if (!Main.keyboard.visible && !this._weClosedIt) {
-            const focus = Main.inputMethod?.currentFocus;
-            const stillFocused = focus
-                ? (typeof focus.is_focused === 'function' ? focus.is_focused() : true)
-                : false;
-            if (stillFocused) {
-                this._markHiddenByUser();
-                console.error('[osk-fix] HIDE confirmed by visibility-changed');
-            }
-        }
-        this._weClosedIt = false;
-    }
-
-    // One choke point for every "try to show the OSK" call site
-    // (maybeHandleEvent override and the poll loop). The open() monkey
-    // patch is the real backstop (it also blocks GNOME's own internal
-    // reopen calls) - this just avoids issuing a call that would be
-    // silently dropped there anyway, and keeps the intent explicit at
-    // each call site.
-    _tryOpen() {
-        if (this._isHidden()) return;
-        Main.keyboard.open(Main.layoutManager.focusIndex);
-    }
-
-    // --- event handling ---------------------------------------------------
-
     _onCapturedEvent(actor, event) {
         try {
             if (!POINTER_PRESS_TYPES.has(event.type())) return;
 
             const keyboardActor = Main.keyboard?._keyboard;
-
-            // Handle OSK clicks first. Kept as a fast-path for Shell
-            // versions where the actor hierarchy heuristics DO match - it
-            // hides instantly without waiting for the visibility-changed
-            // fallback above. If it doesn't match, the fallback still
-            // catches it correctly (just up to one poll tick, 300ms, later).
+            
+            // Handle OSK clicks first to prevent updating _lastPointerPressTime
             if (keyboardActor && this._isInsideKeyboard(actor, keyboardActor)) {
                 if (this._isHideButton(actor)) {
-                    this._markHiddenByUser();
-                    console.error('[osk-fix] HIDE pressed');
+                    this._hideButtonPressed = true;
+                    this._userHidden = true; // Set userHidden instantly on click
                 }
                 return; // Exit early so keyboard clicks don't count as text field taps
             }
@@ -170,9 +107,11 @@ export default class OskFixExtension extends Extension {
             // Only record click time when tapping OUTSIDE the keyboard
             this._lastPointerPressTime = Date.now();
 
-            // NOTE: We NO LONGER clear hidden state here.
-            // _poll() is now the single decision point for whether a click
-            // actually correlates with reopening - see _poll() comments.
+            // Any press outside the OSK lifts the hidden state. Gating on
+            // _actorIsText() left it unliftable in Wayland apps, whose
+            // window actors have no Clutter.Text ancestor.
+            this._userHidden = false;
+            this._hideButtonPressed = false;
         } catch (e) {
             console.error('[osk-fix] Error in captured event handler:', e);
         }
@@ -216,7 +155,9 @@ export default class OskFixExtension extends Extension {
 
             if (event.type() !== Clutter.EventType.BUTTON_PRESS) return false;
 
-            if (!Main.keyboard.visible) this._tryOpen();
+            if (!Main.keyboard.visible && !this._userHidden) {
+                Main.keyboard.open(Main.layoutManager.focusIndex);
+            }
         } catch (e) {
             console.error('[osk-fix] Error in _maybeHandleEvent:', e);
         }
@@ -258,10 +199,7 @@ export default class OskFixExtension extends Extension {
         const focusChanged = this._prevInputFocus !== null && this._prevInputFocus !== focus;
         if (focusChanged) {
             this._prevInputFocus = null;
-            // New field = fresh context. Must clear BOTH flags: leaving
-            // _hideButtonPressed set deadlocks newFieldWithClick (it checks
-            // !_isHidden()), bricking every new field after a single hide.
-            this._clearHidden();
+            this._userHidden = false; // Reset hidden state when focus moves to a NEW input field
         }
 
         if (hasFocus && actorExists) {
@@ -271,25 +209,11 @@ export default class OskFixExtension extends Extension {
             }
 
             const recentClick = this._lastPointerPressTime > 0 && (Date.now() - this._lastPointerPressTime) < 500;
-            // Vivaldi/Chromium can take 1.5-3s to commit focus after click;
-            // use a wider window for new-field commits (4s) vs same-field re-clicks (500ms).
-            const wasUserInitiated = this._lastPointerPressTime > 0 && (Date.now() - this._lastPointerPressTime) < 4000;
 
-            // Two ways to reopen:
-            // 1) Same field re-clicked: focus context unchanged + recent click (500ms)
-            // 2) Genuinely new field clicked: focus context changed + user interaction within 4s
-            //    (ignore native `requested` flag since user explicitly clicked)
-            const sameFieldReClick = !isNewFocus && recentClick;
-            const newFieldWithClick = isNewFocus && wasUserInitiated && !this._isHidden();
-
-            if (!visible && (sameFieldReClick || newFieldWithClick)) {
-                // Clear hidden state ONLY when we're about to reopen
-                this._userHidden = false;
-                this._hideButtonPressed = false;
-                this._tryOpen();
+            if (!visible && !requested && (isNewFocus || recentClick) && !this._userHidden && !this._hideButtonPressed) {
+                Main.keyboard.open(Main.layoutManager.focusIndex);
             }
         } else if (!hasFocus && visible) {
-            this._weClosedIt = true;
             Main.keyboard.close();
             this._prevInputFocus = focus;
         }
@@ -331,13 +255,6 @@ export default class OskFixExtension extends Extension {
         this._oldMaybeHandleEvent = null;
         this._maybeHandleEventWrapper = null;
 
-        if (this._originalOpen && Main.keyboard &&
-            Main.keyboard.open === this._openWrapper) {
-            Main.keyboard.open = this._originalOpen;
-        }
-        this._originalOpen = null;
-        this._openWrapper = null;
-
         if (Main.keyboard && this._originalLastDeviceIsTouchscreen !== undefined) {
             Main.keyboard._lastDeviceIsTouchscreen = this._originalLastDeviceIsTouchscreen;
             this._originalLastDeviceIsTouchscreen = undefined;
@@ -372,4 +289,5 @@ export default class OskFixExtension extends Extension {
         }
         return false;
     }
+
 }
