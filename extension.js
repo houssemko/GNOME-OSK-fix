@@ -108,10 +108,12 @@ export default class OskFixExtension extends Extension {
             // Only record click time when tapping OUTSIDE the keyboard
             this._lastPointerPressTime = Date.now();
 
-            if (this._actorIsText(actor)) {
-                this._userHidden = false;
-                this._hideButtonPressed = false;
-            }
+            // Any press outside the OSK lifts the hidden state - that is the
+            // "reappear when I press the input field again" rule. Gating this
+            // on _actorIsText() made it unliftable in Wayland apps, whose
+            // window actors have no Clutter.Text ancestor.
+            this._userHidden = false;
+            this._hideButtonPressed = false;
         } catch (e) {
             console.error('[osk-fix] Error in captured event handler:', e);
         }
@@ -212,7 +214,10 @@ export default class OskFixExtension extends Extension {
 
             const recentClick = this._lastPointerPressTime > 0 && (Date.now() - this._lastPointerPressTime) < 500;
 
-            if (!visible && !requested && (isNewFocus || recentClick) && !this._userHidden && !this._hideButtonPressed) {
+            // Click-only reappearance: focus changes alone (Tab navigation,
+            // programmatic .grab_key_focus(), app autofocus) never open the
+            // OSK - a fresh press outside the OSK within 500ms does.
+            if (!visible && !requested && recentClick && !this._userHidden && !this._hideButtonPressed) {
                 if (this._isPasswordFocused()) return;
                 Main.keyboard.open(Main.layoutManager.focusIndex);
             }
