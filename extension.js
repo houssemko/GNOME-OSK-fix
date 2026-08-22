@@ -284,7 +284,8 @@ export default class OskFixExtension extends Extension {
                 this._userHidden = false;
                 this._hideButtonPressed = false;
                 this._tryOpen();
-            } else if (!hasFocus && visible) {
+            }
+        } else if (!hasFocus && visible) {
             this._weClosedIt = true;
             Main.keyboard.close();
             this._prevInputFocus = focus;
