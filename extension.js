@@ -266,12 +266,15 @@ export default class OskFixExtension extends Extension {
             }
 
             const recentClick = this._lastPointerPressTime > 0 && (Date.now() - this._lastPointerPressTime) < 500;
+            // Vivaldi/Chromium can take 1.5-3s to commit focus after click;
+            // use a wider window for new-field commits (4s) vs same-field re-clicks (500ms).
+            const wasUserInitiated = this._lastPointerPressTime > 0 && (Date.now() - this._lastPointerPressTime) < 4000;
 
             // Two ways to reopen:
-            // 1) Same field re-clicked: focus context unchanged + recent click
-            // 2) Genuinely new field clicked: focus context changed + recent click + not already requested by native
+            // 1) Same field re-clicked: focus context unchanged + recent click (500ms)
+            // 2) Genuinely new field clicked: focus context changed + user interaction within 4s
             const sameFieldReClick = !isNewFocus && recentClick;
-            const newFieldWithClick = isNewFocus && recentClick && !requested;
+            const newFieldWithClick = isNewFocus && wasUserInitiated && !requested;
 
             if (!visible && (sameFieldReClick || newFieldWithClick)) {
                 // Clear hidden state ONLY when we're about to reopen
