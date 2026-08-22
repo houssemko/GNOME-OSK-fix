@@ -129,6 +129,7 @@ export default class OskFixExtension extends Extension {
                 : false;
             if (stillFocused) {
                 this._markHiddenByUser();
+                console.error('[osk-fix] HIDE confirmed by visibility-changed');
             }
         }
         this._weClosedIt = false;
@@ -161,6 +162,7 @@ export default class OskFixExtension extends Extension {
             if (keyboardActor && this._isInsideKeyboard(actor, keyboardActor)) {
                 if (this._isHideButton(actor)) {
                     this._markHiddenByUser();
+                    console.error('[osk-fix] HIDE pressed');
                 }
                 return; // Exit early so keyboard clicks don't count as text field taps
             }
@@ -275,15 +277,14 @@ export default class OskFixExtension extends Extension {
             // 2) Genuinely new field clicked: focus context changed + user interaction within 4s
             //    (ignore native `requested` flag since user explicitly clicked)
             const sameFieldReClick = !isNewFocus && recentClick;
-            const newFieldWithClick = isNewFocus && wasUserInitiated;
+            const newFieldWithClick = isNewFocus && wasUserInitiated && !this._isHidden();
 
             if (!visible && (sameFieldReClick || newFieldWithClick)) {
                 // Clear hidden state ONLY when we're about to reopen
                 this._userHidden = false;
                 this._hideButtonPressed = false;
                 this._tryOpen();
-            }
-        } else if (!hasFocus && visible) {
+            } else if (!hasFocus && visible) {
             this._weClosedIt = true;
             Main.keyboard.close();
             this._prevInputFocus = focus;
