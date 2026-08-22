@@ -1,5 +1,4 @@
 import Clutter from 'gi://Clutter';
-import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
@@ -29,15 +28,6 @@ export default class OskFixExtension extends Extension {
         this._prevVisible = false;
         this._prevInputFocus = null;
 
-        this._a11y = new Gio.Settings({
-            schema_id: 'org.gnome.desktop.a11y.applications',
-        });
-
-        this._originalOskEnabled = this._a11y.get_boolean(
-            'screen-keyboard-enabled'
-        );
-
-        this._didOverrideOsk = false;
         this._injectionManager = new InjectionManager();
 
         const keyboard = Main.keyboard;
@@ -58,15 +48,6 @@ export default class OskFixExtension extends Extension {
             console.error(
                 '[osk-fix] Main.keyboard not available at enable'
             );
-        }
-
-        /*
-         * If GNOME's global accessibility setting disabled the OSK,
-         * temporarily enable it while this extension is active.
-         */
-        if (!this._originalOskEnabled) {
-            this._a11y.set_boolean('screen-keyboard-enabled', true);
-            this._didOverrideOsk = true;
         }
 
         /*
@@ -111,6 +92,33 @@ export default class OskFixExtension extends Extension {
 
             keyboard._lastDeviceIsTouchscreen =
                 this._lastDeviceIsTouchscreenOverride;
+        }
+
+        /*
+         * Force the OSK subsystem on regardless of the accessibility
+         * setting or attached devices - without touching any GSettings.
+         * The native destroy path is never reached while the extension
+         * is enabled; restoring the original method in disable() lets
+         * GNOME clean up normally.
+         */
+        if (typeof keyboard._syncEnabled === 'function') {
+            this._injectionManager.overrideMethod(
+                keyboard,
+                '_syncEnabled',
+                originalMethod => function () {
+                    if (!this._keyboard) {
+                        this._keyboard = new Keyboard();
+                        this._keyboard.connect(
+                            'visibility-changed',
+                            () => {
+                                this.emit('visibility-changed');
+                                this._bottomDragGesture.enabled =
+                                    !this._keyboard.visible;
+                            }
+                        );
+                    }
+                }
+            );
         }
 
         const keyboardPrototype = Object.getPrototypeOf(keyboard);
@@ -488,23 +496,6 @@ export default class OskFixExtension extends Extension {
         this._lastDeviceIsTouchscreenOverride = null;
         this._originalLastDeviceIsTouchscreen = null;
 
-        /*
-         * Restore the user's original accessibility setting only when this
-         * extension changed it.
-         */
-        if (
-            this._didOverrideOsk &&
-            this._a11y
-        ) {
-            this._a11y.set_boolean(
-                'screen-keyboard-enabled',
-                this._originalOskEnabled
-            );
-
-            this._didOverrideOsk = false;
-        }
-
-        this._a11y = null;
 
         /*
          * Keep GNOME's keyboard state clean after disabling the extension.
