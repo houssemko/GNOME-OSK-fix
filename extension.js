@@ -89,6 +89,8 @@ export default class OskFixExtension extends Extension {
             }
         );
         GLib.Source.set_name_by_id(this._pollId, '[osk-fix] poll');
+
+        if (DEBUG) console.error('[osk-fix] DEBUG build enabled — poll running');
     }
 
     _onCapturedEvent(actor, event) {
@@ -221,7 +223,7 @@ export default class OskFixExtension extends Extension {
             const wasUserInitiated = timeSinceInteraction < 700;
 
             if (DEBUG && timeSinceInteraction < 2000) {
-                console.debug(`[osk-fix] hf=${hasFocus} newF=${isNewFocus} vis=${visible} req=${requested} ` +
+                console.error(`[osk-fix] hf=${hasFocus} newF=${isNewFocus} vis=${visible} req=${requested} ` +
                     `tsi=${Math.round(timeSinceInteraction)} uH=${this._userHidden} hbp=${this._hideButtonPressed} ` +
                     `pw=${this._isPasswordFocused()}`);
             }
@@ -233,12 +235,12 @@ export default class OskFixExtension extends Extension {
                 ((isNewFocus && wasUserInitiated) || recentClick) &&
                 !this._userHidden && !this._hideButtonPressed) {
                 if (!this._isPasswordFocused()) {
-                    if (DEBUG) console.debug('[osk-fix] OPEN');
+                    if (DEBUG) console.error('[osk-fix] OPEN');
                     Main.keyboard.open(Main.layoutManager.focusIndex);
                 }
             }
         } else if (!hasFocus && visible) {
-            if (DEBUG) console.debug('[osk-fix] close: no IM focus');
+            if (DEBUG) console.error('[osk-fix] close: no IM focus');
             Main.keyboard.close();
             this._prevInputFocus = focus;
         }
