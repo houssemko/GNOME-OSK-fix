@@ -273,8 +273,9 @@ export default class OskFixExtension extends Extension {
             // Two ways to reopen:
             // 1) Same field re-clicked: focus context unchanged + recent click (500ms)
             // 2) Genuinely new field clicked: focus context changed + user interaction within 4s
+            //    (ignore native `requested` flag since user explicitly clicked)
             const sameFieldReClick = !isNewFocus && recentClick;
-            const newFieldWithClick = isNewFocus && wasUserInitiated && !requested;
+            const newFieldWithClick = isNewFocus && wasUserInitiated;
 
             if (!visible && (sameFieldReClick || newFieldWithClick)) {
                 // Clear hidden state ONLY when we're about to reopen
