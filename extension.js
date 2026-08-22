@@ -9,7 +9,6 @@ import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 const POINTER_PRESS_TYPES = new Set([
     Clutter.EventType.BUTTON_PRESS,
 ]);
-const USER_INTERACTION_WINDOW_MS = 4000;
 const DEBUG = true;
 
 export default class OskFixExtension extends Extension {
@@ -19,6 +18,8 @@ export default class OskFixExtension extends Extension {
         this._maybeHandleEventWrapper = null;
         this._originalLastDeviceIsTouchscreen = null;
         this._hiddenByUser = false;
+        this._hiddenAt = 0;
+        this._hiddenForFocus = null;
         this._weClosedIt = false;
         this._visibilitySignalId = 0;
 
@@ -111,6 +112,8 @@ export default class OskFixExtension extends Extension {
                 : false;
             if (stillFocused) {
                 this._hiddenByUser = true;
+                this._hiddenAt = Date.now();
+                this._hiddenForFocus = Main.inputMethod?.currentFocus ?? null;
                 if (DEBUG) console.error('[osk-fix] hidden by user (visibility)');
             }
         }
@@ -212,23 +215,18 @@ export default class OskFixExtension extends Extension {
         }
 
         if (hasFocus && actorExists) {
-            // Single unified trigger: an editable has focus and the user
-            // clicked something within the interaction window. Covers:
-            // - new field clicked (incl. Wayland clients committing focus
-            //   up to a few seconds after the click)
-            // - same field re-clicked after hiding
-            // Programmatic focus / Tab navigation without any click remains
-            // suppressed (timeSinceInteraction = Infinity).
-            const timeSinceInteraction = this._lastPointerPressTime > 0
-                ? Date.now() - this._lastPointerPressTime : Infinity;
-            const userActive = timeSinceInteraction < USER_INTERACTION_WINDOW_MS;
+            // Wayland clients' pointer events never reach the Shell stage,
+            // so click-correlation is unobservable for apps like Vivaldi.
+            // The only reliable open signal for them is the IM focus commit
+            // itself (a new editable gained focus).
+            const newEditable = this._prevInputFocus !== focus;
 
             if (DEBUG && hasFocus && !visible) {
-                console.error(`[osk-fix] poll: userActive tsi=${Math.round(timeSinceInteraction)} ` +
+                console.error(`[osk-fix] poll: newEd=${newEditable} ` +
                     `hidden=${this._hiddenByUser} req=${requested}`);
             }
 
-            if (!visible && !requested && userActive && !this._hiddenByUser) {
+            if (!visible && !requested && newEditable && !this._hiddenByUser) {
                 if (DEBUG) console.error('[osk-fix] OPEN called');
                 Main.keyboard.open(Main.layoutManager.focusIndex);
             }
