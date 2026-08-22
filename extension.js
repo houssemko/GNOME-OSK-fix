@@ -216,9 +216,11 @@ export default class OskFixExtension extends Extension {
             const timeSinceInteraction = this._lastPointerPressTime > 0
                 ? Date.now() - this._lastPointerPressTime : Infinity;
             const recentClick = timeSinceInteraction < 500;
-            // Wider window for NEW focus commits: Wayland IM focus (text-input-v3)
-            // can land several hundred ms after the click that caused it.
-            const wasUserInitiated = timeSinceInteraction < 2500;
+            // Wider window for NEW focus commits: Vivaldi/Chromium commit
+            // Wayland text-input focus 1.5-3s after the click under load
+            // (empirically measured). Programmatic autofocus with NO click
+            // ever remains suppressed (Infinity).
+            const wasUserInitiated = timeSinceInteraction < 4000;
 
             // Open when: a new editable gains focus shortly after a click
             // (covers slow Wayland focus commits), OR the already-focused
