@@ -33,11 +33,6 @@ export default class OskFixExtension extends Extension {
             schema_id: 'org.gnome.desktop.a11y.applications',
         });
 
-        this._originalOskEnabled = this._a11y.get_boolean(
-            'screen-keyboard-enabled'
-        );
-
-        this._didOverrideOsk = false;
         this._injectionManager = new InjectionManager();
 
         const keyboard = Main.keyboard;
@@ -58,15 +53,6 @@ export default class OskFixExtension extends Extension {
             console.error(
                 '[osk-fix] Main.keyboard not available at enable'
             );
-        }
-
-        /*
-         * If GNOME's global accessibility setting disabled the OSK,
-         * temporarily enable it while this extension is active.
-         */
-        if (!this._originalOskEnabled) {
-            this._a11y.set_boolean('screen-keyboard-enabled', true);
-            this._didOverrideOsk = true;
         }
 
         /*
@@ -151,7 +137,8 @@ export default class OskFixExtension extends Extension {
                     return function (...args) {
                         if (
                             extension._userHidden ||
-                            extension._hideButtonPressed
+                            extension._hideButtonPressed ||
+                            !extension._a11yOskEnabled()
                         ) {
                             return undefined;
                         }
@@ -175,7 +162,8 @@ export default class OskFixExtension extends Extension {
                     return function (...args) {
                         if (
                             extension._userHidden ||
-                            extension._hideButtonPressed
+                            extension._hideButtonPressed ||
+                            !extension._a11yOskEnabled()
                         ) {
                             return undefined;
                         }
@@ -293,6 +281,19 @@ export default class OskFixExtension extends Extension {
         return false;
     }
 
+    /**
+     * The extension only activates when the user has turned Screen Keyboard
+     * on in GNOME's Accessibility settings. Read live so toggling the
+     * switch takes effect immediately without reloading.
+     */
+    _a11yOskEnabled() {
+        try {
+            return this._a11y.get_boolean('screen-keyboard-enabled');
+        } catch (e) {
+            return false;
+        }
+    }
+
     _maybeHandleEvent(event, originalMethod) {
         try {
             /*
@@ -323,7 +324,8 @@ export default class OskFixExtension extends Extension {
             if (
                 !Main.keyboard.visible &&
                 !this._userHidden &&
-                !this._hideButtonPressed
+                !this._hideButtonPressed &&
+                this._a11yOskEnabled()
             ) {
                 Main.keyboard.open(
                     Main.layoutManager.focusIndex
@@ -407,7 +409,8 @@ export default class OskFixExtension extends Extension {
                 !requested &&
                 (isNewFocus || recentClick) &&
                 !this._userHidden &&
-                !this._hideButtonPressed
+                !this._hideButtonPressed &&
+                this._a11yOskEnabled()
             ) {
                 keyboard.open(
                     Main.layoutManager.focusIndex
@@ -487,22 +490,6 @@ export default class OskFixExtension extends Extension {
 
         this._lastDeviceIsTouchscreenOverride = null;
         this._originalLastDeviceIsTouchscreen = null;
-
-        /*
-         * Restore the user's original accessibility setting only when this
-         * extension changed it.
-         */
-        if (
-            this._didOverrideOsk &&
-            this._a11y
-        ) {
-            this._a11y.set_boolean(
-                'screen-keyboard-enabled',
-                this._originalOskEnabled
-            );
-
-            this._didOverrideOsk = false;
-        }
 
         this._a11y = null;
 
