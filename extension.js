@@ -258,7 +258,10 @@ export default class OskFixExtension extends Extension {
         const focusChanged = this._prevInputFocus !== null && this._prevInputFocus !== focus;
         if (focusChanged) {
             this._prevInputFocus = null;
-            this._userHidden = false; // Reset hidden state when focus moves to a NEW input field
+            // New field = fresh context. Must clear BOTH flags: leaving
+            // _hideButtonPressed set deadlocks newFieldWithClick (it checks
+            // !_isHidden()), bricking every new field after a single hide.
+            this._clearHidden();
         }
 
         if (hasFocus && actorExists) {
