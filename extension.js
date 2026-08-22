@@ -212,12 +212,19 @@ export default class OskFixExtension extends Extension {
                 this._prevInputFocus = focus;
             }
 
-            const recentClick = this._lastPointerPressTime > 0 && (Date.now() - this._lastPointerPressTime) < 500;
+            const timeSinceInteraction = this._lastPointerPressTime > 0
+                ? Date.now() - this._lastPointerPressTime : Infinity;
+            const recentClick = timeSinceInteraction < 500;
+            // Wider window for NEW focus commits: Wayland IM focus (text-input-v3)
+            // can land several hundred ms after the click that caused it.
+            const wasUserInitiated = timeSinceInteraction < 700;
 
-            // Click-only reappearance: focus changes alone (Tab navigation,
-            // programmatic .grab_key_focus(), app autofocus) never open the
-            // OSK - a fresh press outside the OSK within 500ms does.
-            if (!visible && !requested && recentClick && !this._userHidden && !this._hideButtonPressed) {
+            // Open when: a new editable gains focus shortly after a click
+            // (covers slow Wayland focus commits), OR the already-focused
+            // field is re-clicked. Tab/programmatic focus alone never opens.
+            if (!visible && !requested &&
+                ((isNewFocus && wasUserInitiated) || recentClick) &&
+                !this._userHidden && !this._hideButtonPressed) {
                 if (this._isPasswordFocused()) return;
                 Main.keyboard.open(Main.layoutManager.focusIndex);
             }
