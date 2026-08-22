@@ -9,7 +9,8 @@ import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 const POINTER_PRESS_TYPES = new Set([
     Clutter.EventType.BUTTON_PRESS,
 ]);
-const DEBUG = true; // TEMPORARY
+const USER_INTERACTION_WINDOW_MS = 4000;
+const DEBUG = false;
 
 export default class OskFixExtension extends Extension {
     enable() {
@@ -17,8 +18,8 @@ export default class OskFixExtension extends Extension {
         this._oldMaybeHandleEvent = null;
         this._maybeHandleEventWrapper = null;
         this._originalLastDeviceIsTouchscreen = null;
-        this._userHidden = false;
-        this._hideButtonPressed = false;
+        this._hiddenByUser = false;
+        this._weClosedIt = false;
         this._visibilitySignalId = 0;
 
         this._lastPointerPressTime = 0;
@@ -44,12 +45,14 @@ export default class OskFixExtension extends Extension {
             this._originalLastDeviceIsTouchscreen = Main.keyboard._lastDeviceIsTouchscreen;
             Main.keyboard._lastDeviceIsTouchscreen = () => true;
 
-            this._visibilitySignalId = Main.keyboard.connect('visibility-changed', () => {
-                if (!Main.keyboard.visible && this._hideButtonPressed) {
-                    this._userHidden = true;
-                    this._hideButtonPressed = false;
-                }
-            });
+            // Actor-independent hide detection: if the OSK hides while an
+            // editable still holds input focus, and it wasn't our own
+            // poll-driven close, the user dismissed it (hide key, Esc,
+            // swipe-down, etc). GNOME 50 delivers OSK key presses with
+            // Meta_Stage as the event actor, so actor-tree identification
+            // of the hide key is impossible.
+            this._visibilitySignalId = Main.keyboard.connect(
+                'visibility-changed', () => this._onVisibilityChanged());
 
             if (typeof Main.keyboard.maybeHandleEvent === 'function') {
                 this._oldMaybeHandleEvent = Main.keyboard.maybeHandleEvent;
@@ -63,7 +66,7 @@ export default class OskFixExtension extends Extension {
             this._originalOpen = Main.keyboard.open;
             const ext = this;
             this._openWrapper = function (...args) {
-                if (ext._userHidden || ext._hideButtonPressed) return;
+                if (ext._isHidden()) return;
                 return ext._originalOpen.apply(this, args);
             };
             Main.keyboard.open = this._openWrapper;
@@ -74,7 +77,7 @@ export default class OskFixExtension extends Extension {
             // manager entirely. Prototype patch survives widget recreation.
             this._originalWidgetOpen = Keyboard.prototype.open;
             this._widgetOpenWrapper = function (...args) {
-                if (ext._userHidden || ext._hideButtonPressed) return;
+                if (ext._isHidden()) return;
                 return ext._originalWidgetOpen.apply(this, args);
             };
             Keyboard.prototype.open = this._widgetOpenWrapper;
@@ -100,13 +103,31 @@ export default class OskFixExtension extends Extension {
         GLib.Source.set_name_by_id(this._pollId, '[osk-fix] poll');
     }
 
+    _onVisibilityChanged() {
+        if (!Main.keyboard.visible && !this._weClosedIt) {
+            const focus = Main.inputMethod?.currentFocus;
+            const stillFocused = focus
+                ? (typeof focus.is_focused === 'function' ? !!focus.is_focused() : true)
+                : false;
+            if (stillFocused) {
+                this._hiddenByUser = true;
+                if (DEBUG) console.error('[osk-fix] hidden by user (visibility)');
+            }
+        }
+        this._weClosedIt = false;
+    }
+
+    _isHidden() {
+        return this._hiddenByUser;
+    }
+
     _onCapturedEvent(actor, event) {
         try {
             if (!POINTER_PRESS_TYPES.has(event.type())) return;
 
-            // Actor-hierarchy checks fail on GNOME 50.4 (the pressed key is
-            // not reported as a descendant of Main.keyboard._keyboard), so
-            // decide "is this press on the OSK?" using stage coordinates.
+            // Actor-hierarchy checks fail on GNOME 50.4 (pressed OSK keys
+            // arrive with Meta_Stage as the event actor), so decide "is this
+            // press on the OSK?" using stage coordinates instead.
             const [x, y] = event.get_coords();
             const kbd = Main.keyboard?._keyboard;
             let pressOnOsk = false;
@@ -117,53 +138,18 @@ export default class OskFixExtension extends Extension {
             }
 
             if (pressOnOsk) {
-                const isHide = this._isHideButton(actor);
-                if (DEBUG) {
-                    let chain = [];
-                    let cur = actor;
-                    while (cur && chain.length < 6) {
-                        const cls = typeof cur.style_class === 'string' ? cur.style_class : '';
-                        chain.push(`${cur.constructor?.name || '?'}${cls ? '[' + cls + ']' : ''}`);
-                        cur = cur.get_parent ? cur.get_parent() : null;
-                    }
-                    console.error(`[osk-fix] OSK press hideBtn=${isHide} chain=${chain.join(' > ')}`);
-                }
-                if (isHide) {
-                    this._hideButtonPressed = true;
-                    this._userHidden = true;
-                }
-                return; // OSK clicks never count as text-field taps
+                // OSK clicks never count as text-field taps
+                return;
             }
 
-            // Press outside the OSK: record click time and lift hidden state
+            // Press outside the OSK: record click time and clear the
+            // user-hidden state - this is the "reappear when I press"
+            // signal.
             this._lastPointerPressTime = Date.now();
-            this._userHidden = false;
-            this._hideButtonPressed = false;
+            this._hiddenByUser = false;
         } catch (e) {
             console.error('[osk-fix] Error in captured event handler:', e);
         }
-    }
-
-    _isHideButton(actor) {
-        let cur = actor;
-        while (cur) {
-            const styleClass = cur.style_class || (typeof cur.get_style_class_name === 'function' ? cur.get_style_class_name() : '');
-            if (typeof styleClass === 'string' && (styleClass.includes('hide-key') || styleClass.includes('hide'))) {
-                return true;
-            }
-
-            const iconName = cur.icon_name || cur.child?.icon_name;
-            if (['osk-hide-symbolic', 'go-down-symbolic', 'keyboard-hide-symbolic', 'input-keyboard-symbolic'].includes(iconName)) {
-                return true;
-            }
-
-            if (cur._key?.name === 'hide' || cur._key?.action === 'hide') {
-                return true;
-            }
-
-            cur = cur.get_parent ? cur.get_parent() : null;
-        }
-        return false;
     }
 
     _maybeHandleEvent(event) {
@@ -178,7 +164,7 @@ export default class OskFixExtension extends Extension {
 
             if (event.type() !== Clutter.EventType.BUTTON_PRESS) return false;
 
-            if (!Main.keyboard.visible && !this._userHidden) {
+            if (!Main.keyboard.visible && !this._isHidden()) {
                 Main.keyboard.open(Main.layoutManager.focusIndex);
             }
         } catch (e) {
@@ -219,28 +205,35 @@ export default class OskFixExtension extends Extension {
         this._prevVisible = visible;
         const requested = !!(kbd && kbd._keyboardRequested);
 
-        const focusChanged = this._prevInputFocus !== null && this._prevInputFocus !== focus;
-        if (focusChanged) {
-            this._prevInputFocus = null;
+        if (focus !== this._prevInputFocus) {
+            this._prevInputFocus = focus;
         }
 
         if (hasFocus && actorExists) {
-            const isNewFocus = !this._prevInputFocus;
-            if (isNewFocus) {
-                this._prevInputFocus = focus;
+            // Single unified trigger: an editable has focus and the user
+            // clicked something within the interaction window. Covers:
+            // - new field clicked (incl. Wayland clients committing focus
+            //   up to a few seconds after the click)
+            // - same field re-clicked after hiding
+            // Programmatic focus / Tab navigation without any click remains
+            // suppressed (timeSinceInteraction = Infinity).
+            const timeSinceInteraction = this._lastPointerPressTime > 0
+                ? Date.now() - this._lastPointerPressTime : Infinity;
+            const userActive = timeSinceInteraction < USER_INTERACTION_WINDOW_MS;
+
+            if (DEBUG && userActive && !visible) {
+                console.error(`[osk-fix] poll: userActive tsi=${Math.round(timeSinceInteraction)} ` +
+                    `hidden=${this._hiddenByUser} req=${requested}`);
             }
 
-            const recentClick = this._lastPointerPressTime > 0 && (Date.now() - this._lastPointerPressTime) < 500;
-
-            if (DEBUG && recentClick && !visible) {
-                console.error(`[osk-fix] poll: recentClick w/ field focused, hidden=${this._userHidden || this._hideButtonPressed} req=${requested}`);
-            }
-
-            if (!visible && !requested && (isNewFocus || recentClick) && !this._userHidden && !this._hideButtonPressed) {
+            if (!visible && !requested && userActive && !this._hiddenByUser) {
                 if (DEBUG) console.error('[osk-fix] OPEN called');
                 Main.keyboard.open(Main.layoutManager.focusIndex);
             }
         } else if (!hasFocus && visible) {
+            // Our own poll-driven close - tell the visibility handler so it
+            // is not misread as a user dismissal.
+            this._weClosedIt = true;
             Main.keyboard.close();
             this._prevInputFocus = focus;
         }
