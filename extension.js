@@ -9,6 +9,7 @@ const POINTER_PRESS_TYPES = new Set([
     Clutter.EventType.BUTTON_PRESS,
 ]);
 const PASSWORD_PURPOSE = Clutter.InputContentPurpose.PASSWORD;
+const DEBUG = true; // TEMPORARY - remove after diagnosis
 
 export default class OskFixExtension extends Extension {
     enable() {
@@ -219,16 +220,25 @@ export default class OskFixExtension extends Extension {
             // can land several hundred ms after the click that caused it.
             const wasUserInitiated = timeSinceInteraction < 700;
 
+            if (DEBUG && timeSinceInteraction < 2000) {
+                console.debug(`[osk-fix] hf=${hasFocus} newF=${isNewFocus} vis=${visible} req=${requested} ` +
+                    `tsi=${Math.round(timeSinceInteraction)} uH=${this._userHidden} hbp=${this._hideButtonPressed} ` +
+                    `pw=${this._isPasswordFocused()}`);
+            }
+
             // Open when: a new editable gains focus shortly after a click
             // (covers slow Wayland focus commits), OR the already-focused
             // field is re-clicked. Tab/programmatic focus alone never opens.
             if (!visible && !requested &&
                 ((isNewFocus && wasUserInitiated) || recentClick) &&
                 !this._userHidden && !this._hideButtonPressed) {
-                if (this._isPasswordFocused()) return;
-                Main.keyboard.open(Main.layoutManager.focusIndex);
+                if (!this._isPasswordFocused()) {
+                    if (DEBUG) console.debug('[osk-fix] OPEN');
+                    Main.keyboard.open(Main.layoutManager.focusIndex);
+                }
             }
         } else if (!hasFocus && visible) {
+            if (DEBUG) console.debug('[osk-fix] close: no IM focus');
             Main.keyboard.close();
             this._prevInputFocus = focus;
         }
