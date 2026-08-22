@@ -10,7 +10,7 @@ const POINTER_PRESS_TYPES = new Set([
     Clutter.EventType.BUTTON_PRESS,
 ]);
 const USER_INTERACTION_WINDOW_MS = 4000;
-const DEBUG = false;
+const DEBUG = true;
 
 export default class OskFixExtension extends Extension {
     enable() {
@@ -137,6 +137,8 @@ export default class OskFixExtension extends Extension {
                 pressOnOsk = x >= sx && x <= sx + w && y >= sy && y <= sy + h;
             }
 
+            if (DEBUG) console.error(`[osk-fix] press @${x},${y} onOsk=${pressOnOsk} kbdVisible=${kbd ? !!kbd.visible : 'n/a'}`);
+
             if (pressOnOsk) {
                 // OSK clicks never count as text-field taps
                 return;
@@ -221,7 +223,7 @@ export default class OskFixExtension extends Extension {
                 ? Date.now() - this._lastPointerPressTime : Infinity;
             const userActive = timeSinceInteraction < USER_INTERACTION_WINDOW_MS;
 
-            if (DEBUG && userActive && !visible) {
+            if (DEBUG && hasFocus && !visible) {
                 console.error(`[osk-fix] poll: userActive tsi=${Math.round(timeSinceInteraction)} ` +
                     `hidden=${this._hiddenByUser} req=${requested}`);
             }
