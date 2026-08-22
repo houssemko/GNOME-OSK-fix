@@ -9,6 +9,7 @@ import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 const POINTER_PRESS_TYPES = new Set([
     Clutter.EventType.BUTTON_PRESS,
 ]);
+const DEBUG = true; // TEMPORARY
 
 export default class OskFixExtension extends Extension {
     enable() {
@@ -124,15 +125,27 @@ export default class OskFixExtension extends Extension {
             
             // Handle OSK clicks first to prevent updating _lastPointerPressTime
             if (keyboardActor && this._isInsideKeyboard(actor, keyboardActor)) {
-                if (this._isHideButton(actor)) {
-                    this._hideButtonPressed = true;
-                    this._userHidden = true; // Set userHidden instantly on click
+                const isHide = this._isHideButton(actor);
+                if (DEBUG) {
+                    let chain = [];
+                    let cur = actor;
+                    while (cur && chain.length < 6) {
+                        const cls = typeof cur.style_class === 'string' ? cur.style_class : '';
+                        chain.push(`${cur.constructor?.name || '?'}${cls ? '[' + cls + ']' : ''}`);
+                        cur = cur.get_parent ? cur.get_parent() : null;
+                    }
+                    console.error(`[osk-fix] OSK-internal press hideBtn=${isHide} chain=${chain.join(' > ')}`);
                 }
-                return; // Exit early so keyboard clicks don't count as text field taps
+                if (isHide) {
+                    this._hideButtonPressed = true;
+                    this._userHidden = true;
+                }
+                return;
             }
 
             // Only record click time when tapping OUTSIDE the keyboard
             this._lastPointerPressTime = Date.now();
+            if (DEBUG) console.error('[osk-fix] press outside OSK');
 
             // Any press outside the OSK lifts the hidden state. Gating on
             // _actorIsText() left it unliftable in Wayland apps, whose
@@ -239,7 +252,12 @@ export default class OskFixExtension extends Extension {
 
             const recentClick = this._lastPointerPressTime > 0 && (Date.now() - this._lastPointerPressTime) < 500;
 
+            if (DEBUG && recentClick && !visible) {
+                console.error(`[osk-fix] poll: recentClick w/ field focused, hidden=${this._isHidden()} req=${requested}`);
+            }
+
             if (!visible && !requested && (isNewFocus || recentClick) && !this._userHidden && !this._hideButtonPressed) {
+                if (DEBUG) console.error('[osk-fix] OPEN called');
                 Main.keyboard.open(Main.layoutManager.focusIndex);
             }
         } else if (!hasFocus && visible) {
