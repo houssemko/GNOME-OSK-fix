@@ -18,6 +18,7 @@ export default class OskFixExtension extends Extension {
         this._maybeHandleEventWrapper = null;
         this._originalLastDeviceIsTouchscreen = null;
         this._userHidden = false;
+        this._openAttempts = 0;
         this._visibilitySignalId = 0;
         this._hideButtonPressed = false;
 
@@ -235,14 +236,33 @@ export default class OskFixExtension extends Extension {
                 ((isNewFocus && wasUserInitiated) || recentClick) &&
                 !this._userHidden && !this._hideButtonPressed) {
                 if (!this._isPasswordFocused()) {
-                    if (DEBUG) console.error('[osk-fix] OPEN');
-                    Main.keyboard.open(Main.layoutManager.focusIndex);
+                    this._openAttempts++;
+
+                    // Zombie detection: GNOME 50 can dispose the Keyboard
+                    // widget (lock/session transitions) while
+                    // KeyboardManager._keyboard still references it. open()
+                    // on the disposed object silently no-ops forever. Force
+                    // native recreation once.
+                    if (this._openAttempts >= 4) {
+                        console.error('[osk-fix] keyboard unresponsive - forcing native recreation');
+                        try {
+                            Main.keyboard._keyboard = null;
+                            Main.keyboard._syncEnabled();
+                        } catch (e) {
+                            console.error('[osk-fix] keyboard recreation failed:', e);
+                        }
+                        this._openAttempts = 0;
+                    } else {
+                        if (DEBUG && this._openAttempts > 1) console.error(`[osk-fix] OPEN attempt ${this._openAttempts}`);
+                        Main.keyboard.open(Main.layoutManager.focusIndex);
+                    }
                 }
             }
         } else if (!hasFocus && visible) {
             if (DEBUG) console.error('[osk-fix] close: no IM focus');
             Main.keyboard.close();
             this._prevInputFocus = focus;
+            this._openAttempts = 0;
         }
     }
 
