@@ -9,7 +9,6 @@ const POINTER_PRESS_TYPES = new Set([
     Clutter.EventType.BUTTON_PRESS,
 ]);
 const PASSWORD_PURPOSE = Clutter.InputContentPurpose.PASSWORD;
-const DEBUG = true; // TEMPORARY - remove after diagnosis
 
 export default class OskFixExtension extends Extension {
     enable() {
@@ -18,7 +17,6 @@ export default class OskFixExtension extends Extension {
         this._maybeHandleEventWrapper = null;
         this._originalLastDeviceIsTouchscreen = null;
         this._userHidden = false;
-        this._openAttempts = 0;
         this._visibilitySignalId = 0;
         this._hideButtonPressed = false;
 
@@ -90,8 +88,6 @@ export default class OskFixExtension extends Extension {
             }
         );
         GLib.Source.set_name_by_id(this._pollId, '[osk-fix] poll');
-
-        if (DEBUG) console.error('[osk-fix] DEBUG build enabled — poll running');
     }
 
     _onCapturedEvent(actor, event) {
@@ -223,12 +219,6 @@ export default class OskFixExtension extends Extension {
             // can land several hundred ms after the click that caused it.
             const wasUserInitiated = timeSinceInteraction < 2500;
 
-            if (DEBUG && timeSinceInteraction < 2000) {
-                console.error(`[osk-fix] hf=${hasFocus} newF=${isNewFocus} vis=${visible} req=${requested} ` +
-                    `tsi=${Math.round(timeSinceInteraction)} uH=${this._userHidden} hbp=${this._hideButtonPressed} ` +
-                    `pw=${this._isPasswordFocused()}`);
-            }
-
             // Open when: a new editable gains focus shortly after a click
             // (covers slow Wayland focus commits), OR the already-focused
             // field is re-clicked. Tab/programmatic focus alone never opens.
@@ -236,33 +226,12 @@ export default class OskFixExtension extends Extension {
                 ((isNewFocus && wasUserInitiated) || recentClick) &&
                 !this._userHidden && !this._hideButtonPressed) {
                 if (!this._isPasswordFocused()) {
-                    this._openAttempts++;
-
-                    // Zombie detection: GNOME 50 can dispose the Keyboard
-                    // widget (lock/session transitions) while
-                    // KeyboardManager._keyboard still references it. open()
-                    // on the disposed object silently no-ops forever. Force
-                    // native recreation once.
-                    if (this._openAttempts >= 2) {
-                        console.error('[osk-fix] keyboard unresponsive - forcing native recreation');
-                        try {
-                            Main.keyboard._keyboard = null;
-                            Main.keyboard._syncEnabled();
-                        } catch (e) {
-                            console.error('[osk-fix] keyboard recreation failed:', e);
-                        }
-                        this._openAttempts = 0;
-                    } else {
-                        if (DEBUG && this._openAttempts > 1) console.error(`[osk-fix] OPEN attempt ${this._openAttempts}`);
-                        Main.keyboard.open(Main.layoutManager.focusIndex);
-                    }
+                    Main.keyboard.open(Main.layoutManager.focusIndex);
                 }
             }
         } else if (!hasFocus && visible) {
-            if (DEBUG) console.error('[osk-fix] close: no IM focus');
             Main.keyboard.close();
             this._prevInputFocus = focus;
-            this._openAttempts = 0;
         }
     }
 
