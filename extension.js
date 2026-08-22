@@ -83,12 +83,10 @@ export default class OskFixExtension extends Extension {
 
         try {
             this._keyFocusHandlerId = global.stage.connect('notify::key-focus', () => {
-                const focusActor = global.stage.key_focus;
-                if (focusActor && this._actorIsText(focusActor) && !this._prevKeyFocusActor) {
-                    this._lastPointerPressTime = Date.now();
-                    this._userHidden = false;
-                }
-                this._prevKeyFocusActor = focusActor;
+                // Track only. Focus changes (Tab, programmatic, hide-induced
+                // churn) must never clear hidden state or arm a click -
+                // only an actual press outside the OSK does that.
+                this._prevKeyFocusActor = global.stage.key_focus;
             });
         } catch (e) {
             console.error('[osk-fix] Failed to connect key-focus signal:', e);
@@ -213,7 +211,9 @@ export default class OskFixExtension extends Extension {
         const focusChanged = this._prevInputFocus !== null && this._prevInputFocus !== focus;
         if (focusChanged) {
             this._prevInputFocus = null;
-            this._userHidden = false; // Reset hidden state when focus moves to a NEW input field
+            // NOTE: do NOT clear _userHidden here. Hiding the OSK makes
+            // clients like Chromium re-commit text-input, producing a fresh
+            // focus object - that churn must not undo an explicit hide.
         }
 
         if (hasFocus && actorExists) {
