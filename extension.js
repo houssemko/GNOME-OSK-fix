@@ -3,6 +3,7 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+import { Keyboard } from 'resource:///org/gnome/shell/ui/keyboard.js';
 import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 
 const POINTER_PRESS_TYPES = new Set([
@@ -28,6 +29,8 @@ export default class OskFixExtension extends Extension {
         this._keyFocusHandlerId = 0;
         this._didOverrideOsk = false;
         this._originalOpen = null;
+        this._originalWidgetOpen = null;
+        this._widgetOpenWrapper = null;
         this._openWrapper = null;
 
         this._a11y = new Gio.Settings({ schema_id: 'org.gnome.desktop.a11y.applications' });
@@ -68,6 +71,18 @@ export default class OskFixExtension extends Extension {
                 return ext._originalOpen.apply(this, args);
             };
             Main.keyboard.open = this._openWrapper;
+
+            // The Keyboard WIDGET has its own open(), used by all of GNOME's
+            // internal reopen paths (_onKeyFocusChanged idle show,
+            // _onKeyboardStateChanged panel-state ON). Those bypass the
+            // manager entirely - gate the prototype so every instance,
+            // including recreated ones, respects the hidden state.
+            this._originalWidgetOpen = Keyboard.prototype.open;
+            this._widgetOpenWrapper = function (...args) {
+                if (ext._userHidden || ext._hideButtonPressed) return;
+                return ext._originalWidgetOpen.apply(this, args);
+            };
+            Keyboard.prototype.open = this._widgetOpenWrapper;
         } else {
             console.error('[osk-fix] Main.keyboard not available at enable');
         }
@@ -275,6 +290,13 @@ export default class OskFixExtension extends Extension {
         }
         this._originalOpen = null;
         this._openWrapper = null;
+
+        if (this._originalWidgetOpen &&
+            Keyboard.prototype.open === this._widgetOpenWrapper) {
+            Keyboard.prototype.open = this._originalWidgetOpen;
+        }
+        this._originalWidgetOpen = null;
+        this._widgetOpenWrapper = null;
 
         if (Main.keyboard && this._originalLastDeviceIsTouchscreen !== undefined) {
             Main.keyboard._lastDeviceIsTouchscreen = this._originalLastDeviceIsTouchscreen;
