@@ -9,8 +9,6 @@ import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 const POINTER_PRESS_TYPES = new Set([
     Clutter.EventType.BUTTON_PRESS,
 ]);
-const DEBUG = true; // TEMPORARY
-
 export default class OskFixExtension extends Extension {
     enable() {
         this._pollId = 0;
@@ -118,16 +116,6 @@ export default class OskFixExtension extends Extension {
 
             if (pressOnOsk) {
                 const isHide = this._isHideButton(actor);
-                if (DEBUG) {
-                    let chain = [];
-                    let cur = actor;
-                    while (cur && chain.length < 6) {
-                        const cls = typeof cur.style_class === 'string' ? cur.style_class : '';
-                        chain.push(`${cur.constructor?.name || '?'}${cls ? '[' + cls + ']' : ''}`);
-                        cur = cur.get_parent ? cur.get_parent() : null;
-                    }
-                    console.error(`[osk-fix] OSK press hideBtn=${isHide} chain=${chain.join(' > ')}`);
-                }
                 if (isHide) {
                     this._hideButtonPressed = true;
                     this._userHidden = true;
@@ -232,12 +220,7 @@ export default class OskFixExtension extends Extension {
 
             const recentClick = this._lastPointerPressTime > 0 && (Date.now() - this._lastPointerPressTime) < 500;
 
-            if (DEBUG && recentClick && !visible) {
-                console.error(`[osk-fix] poll: recentClick w/ field focused, hidden=${this._userHidden || this._hideButtonPressed} req=${requested}`);
-            }
-
             if (!visible && !requested && (isNewFocus || recentClick) && !this._userHidden && !this._hideButtonPressed) {
-                if (DEBUG) console.error('[osk-fix] OPEN called');
                 Main.keyboard.open(Main.layoutManager.focusIndex);
             }
         } else if (!hasFocus && visible) {
