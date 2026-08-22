@@ -221,7 +221,7 @@ export default class OskFixExtension extends Extension {
             const recentClick = timeSinceInteraction < 500;
             // Wider window for NEW focus commits: Wayland IM focus (text-input-v3)
             // can land several hundred ms after the click that caused it.
-            const wasUserInitiated = timeSinceInteraction < 700;
+            const wasUserInitiated = timeSinceInteraction < 2500;
 
             if (DEBUG && timeSinceInteraction < 2000) {
                 console.error(`[osk-fix] hf=${hasFocus} newF=${isNewFocus} vis=${visible} req=${requested} ` +
@@ -243,7 +243,7 @@ export default class OskFixExtension extends Extension {
                     // KeyboardManager._keyboard still references it. open()
                     // on the disposed object silently no-ops forever. Force
                     // native recreation once.
-                    if (this._openAttempts >= 4) {
+                    if (this._openAttempts >= 2) {
                         console.error('[osk-fix] keyboard unresponsive - forcing native recreation');
                         try {
                             Main.keyboard._keyboard = null;
