@@ -2,6 +2,9 @@
     "uuid": "osk-fix@local",
     "name": "OSK Fix",
     "description": "Forces the native GNOME on-screen keyboard to appear in applications that don't normally trigger it (Chromium, Vivaldi, Firefox, Electron apps under XWayland). Respects manual hide via keyboard button. Click-only activation (no touch).",
+    "session-modes": [
+        "user"
+    ],
     "shell-version": [
         "45",
         "46",
