@@ -32,34 +32,48 @@ export default class OskFixExtension extends Extension {
         this._a11y = new Gio.Settings({
             schema_id: 'org.gnome.desktop.a11y.applications',
         });
+
         this._originalOskEnabled = this._a11y.get_boolean(
             'screen-keyboard-enabled'
         );
-        this._didOverrideOsk = false;
 
+        this._didOverrideOsk = false;
         this._injectionManager = new InjectionManager();
 
-        if (Main.keyboard) {
-            this._installKeyboardOverrides();
+        const keyboard = Main.keyboard;
 
-            this._visibilitySignalId = Main.keyboard.connect(
+        if (keyboard) {
+            this._installKeyboardOverrides(keyboard);
+
+            this._visibilitySignalId = keyboard.connect(
                 'visibility-changed',
                 () => {
-                    if (!Main.keyboard.visible && this._hideButtonPressed) {
+                    if (!keyboard.visible && this._hideButtonPressed) {
                         this._userHidden = true;
                         this._hideButtonPressed = false;
                     }
                 }
             );
         } else {
-            console.error('[osk-fix] Main.keyboard not available at enable');
+            console.error(
+                '[osk-fix] Main.keyboard not available at enable'
+            );
         }
 
+        /*
+         * If GNOME's global accessibility setting disabled the OSK,
+         * temporarily enable it while this extension is active.
+         */
         if (!this._originalOskEnabled) {
             this._a11y.set_boolean('screen-keyboard-enabled', true);
             this._didOverrideOsk = true;
         }
 
+        /*
+         * We need stage-level pointer handling because GNOME's OSK event
+         * hierarchy is not reliable for identifying OSK clicks on all
+         * supported Shell versions.
+         */
         this._capturedEventHandlerId = global.stage.connect(
             'captured-event',
             (actor, event) => this._onCapturedEvent(actor, event)
@@ -70,8 +84,6 @@ export default class OskFixExtension extends Extension {
             (actor, event) => this._onCapturedEvent(actor, event)
         );
 
-        // Polling remains as a compatibility fallback for focus/state changes
-        // that are not consistently exposed through public signals.
         this._pollId = GLib.timeout_add(
             GLib.PRIORITY_DEFAULT,
             300,
@@ -81,47 +93,59 @@ export default class OskFixExtension extends Extension {
             }
         );
 
-        GLib.Source.set_name_by_id(this._pollId, '[osk-fix] poll');
+        GLib.Source.set_name_by_id(
+            this._pollId,
+            '[osk-fix] poll'
+        );
     }
 
-    _installKeyboardOverrides() {
-        const keyboard = Main.keyboard;
-        if (!keyboard)
+    _installKeyboardOverrides(keyboard) {
+        if (!this._injectionManager)
             return;
 
-        // Force GNOME's keyboard manager to treat the current input device as
-        // touchscreen input. This is a private Shell property and is restored
-        // exactly when the extension is disabled.
         if (typeof keyboard._lastDeviceIsTouchscreen === 'function') {
             this._originalLastDeviceIsTouchscreen =
                 keyboard._lastDeviceIsTouchscreen;
 
             this._lastDeviceIsTouchscreenOverride = () => true;
+
             keyboard._lastDeviceIsTouchscreen =
                 this._lastDeviceIsTouchscreenOverride;
         }
 
-        // Intercept maybeHandleEvent() through InjectionManager.
-        if (typeof keyboard.maybeHandleEvent === 'function') {
+        const keyboardPrototype = Object.getPrototypeOf(keyboard);
+        const keyboardTarget =
+            keyboardPrototype &&
+            typeof keyboardPrototype.maybeHandleEvent === 'function'
+                ? keyboardPrototype
+                : keyboard;
+
+        if (typeof keyboardTarget.maybeHandleEvent === 'function') {
             this._injectionManager.overrideMethod(
-                keyboard,
+                keyboardTarget,
                 'maybeHandleEvent',
                 originalMethod => {
-                    return event => this._maybeHandleEvent(
-                        event,
-                        originalMethod
-                    );
+                    return function (event) {
+                        return this._maybeHandleEvent(
+                            event,
+                            originalMethod
+                        );
+                    }.bind(this);
                 }
             );
         }
 
-        // Block internal manager-side reopen attempts after the user has
-        // explicitly hidden the OSK.
-        if (typeof keyboard.open === 'function') {
+        const openTarget =
+            keyboardPrototype &&
+            typeof keyboardPrototype.open === 'function'
+                ? keyboardPrototype
+                : keyboard;
+
+        if (typeof openTarget.open === 'function') {
             const extension = this;
 
             this._injectionManager.overrideMethod(
-                keyboard,
+                openTarget,
                 'open',
                 originalMethod => {
                     return function (...args) {
@@ -138,9 +162,10 @@ export default class OskFixExtension extends Extension {
             );
         }
 
-        // GNOME's Keyboard widget can be recreated independently of the
-        // manager. Override its prototype so those reopen paths are covered too.
-        if (typeof Keyboard?.prototype?.open === 'function') {
+        if (
+            Keyboard?.prototype &&
+            typeof Keyboard.prototype.open === 'function'
+        ) {
             const extension = this;
 
             this._injectionManager.overrideMethod(
@@ -169,6 +194,7 @@ export default class OskFixExtension extends Extension {
 
             const [x, y] = event.get_coords();
             const kbd = Main.keyboard?._keyboard;
+
             let pressOnOsk = false;
 
             if (kbd && kbd.visible) {
@@ -190,17 +216,27 @@ export default class OskFixExtension extends Extension {
                     this._userHidden = true;
                 }
 
-                // OSK clicks never count as text-field taps.
+                /*
+                 * Never treat a click on an OSK key as a click on a normal
+                 * text input.
+                 */
                 return;
             }
 
-            // Press outside the OSK: remember the click and allow the OSK to
-            // be opened again for a new text-field interaction.
+            /*
+             * Pointer press outside the OSK.
+             *
+             * A later focus event/polling cycle can use this timestamp to
+             * determine whether the user interacted with a text field.
+             */
             this._lastPointerPressTime = Date.now();
             this._userHidden = false;
             this._hideButtonPressed = false;
         } catch (e) {
-            console.error('[osk-fix] Error in captured event handler:', e);
+            console.error(
+                '[osk-fix] Error in captured event handler:',
+                e
+            );
         }
     }
 
@@ -210,9 +246,11 @@ export default class OskFixExtension extends Extension {
         while (cur) {
             const styleClass =
                 cur.style_class ||
-                (typeof cur.get_style_class_name === 'function'
-                    ? cur.get_style_class_name()
-                    : '');
+                (
+                    typeof cur.get_style_class_name === 'function'
+                        ? cur.get_style_class_name()
+                        : ''
+                );
 
             if (
                 typeof styleClass === 'string' &&
@@ -224,7 +262,9 @@ export default class OskFixExtension extends Extension {
                 return true;
             }
 
-            const iconName = cur.icon_name || cur.child?.icon_name;
+            const iconName =
+                cur.icon_name ||
+                cur.child?.icon_name;
 
             if (
                 [
@@ -244,7 +284,10 @@ export default class OskFixExtension extends Extension {
                 return true;
             }
 
-            cur = cur.get_parent ? cur.get_parent() : null;
+            cur =
+                typeof cur.get_parent === 'function'
+                    ? cur.get_parent()
+                    : null;
         }
 
         return false;
@@ -252,6 +295,9 @@ export default class OskFixExtension extends Extension {
 
     _maybeHandleEvent(event, originalMethod) {
         try {
+            /*
+             * Preserve GNOME's original event handling first.
+             */
             const handled = originalMethod
                 ? originalMethod.call(Main.keyboard, event)
                 : false;
@@ -270,10 +316,24 @@ export default class OskFixExtension extends Extension {
             if (event.type() !== Clutter.EventType.BUTTON_PRESS)
                 return false;
 
-            if (!Main.keyboard.visible && !this._userHidden)
-                Main.keyboard.open(Main.layoutManager.focusIndex);
+            /*
+             * If a text actor receives a button press while the OSK is hidden,
+             * reopen it unless the user explicitly dismissed it.
+             */
+            if (
+                !Main.keyboard.visible &&
+                !this._userHidden &&
+                !this._hideButtonPressed
+            ) {
+                Main.keyboard.open(
+                    Main.layoutManager.focusIndex
+                );
+            }
         } catch (e) {
-            console.error('[osk-fix] Error in _maybeHandleEvent:', e);
+            console.error(
+                '[osk-fix] Error in _maybeHandleEvent:',
+                e
+            );
         }
 
         return false;
@@ -283,7 +343,10 @@ export default class OskFixExtension extends Extension {
         try {
             this._poll();
         } catch (e) {
-            console.error('[osk-fix] Exception during poll cycle:', e);
+            console.error(
+                '[osk-fix] Exception during poll cycle:',
+                e
+            );
         }
     }
 
@@ -294,13 +357,18 @@ export default class OskFixExtension extends Extension {
             return;
 
         const focus = Main.inputMethod?.currentFocus;
+
         let hasFocus = false;
 
         if (focus) {
             try {
                 hasFocus = !!focus.is_focused();
             } catch (e) {
-                console.error('[osk-fix] Error checking focus state:', e);
+                console.error(
+                    '[osk-fix] Error checking focus state:',
+                    e
+                );
+
                 hasFocus = !!focus;
             }
         }
@@ -314,7 +382,8 @@ export default class OskFixExtension extends Extension {
 
         this._prevVisible = visible;
 
-        const requested = !!(kbd && kbd._keyboardRequested);
+        const requested =
+            !!(kbd && kbd._keyboardRequested);
 
         const focusChanged =
             this._prevInputFocus !== null &&
@@ -340,7 +409,9 @@ export default class OskFixExtension extends Extension {
                 !this._userHidden &&
                 !this._hideButtonPressed
             ) {
-                keyboard.open(Main.layoutManager.focusIndex);
+                keyboard.open(
+                    Main.layoutManager.focusIndex
+                );
             }
         } else if (!hasFocus && visible) {
             keyboard.close();
@@ -349,35 +420,61 @@ export default class OskFixExtension extends Extension {
     }
 
     disable() {
+        /*
+         * Stop polling first so no new callbacks execute while the extension
+         * is being torn down.
+         */
         if (this._pollId) {
-            GLib.Source.remove(this._pollId);
+            GLib.source_remove(this._pollId);
             this._pollId = 0;
         }
 
+        /*
+         * Disconnect global stage signals.
+         */
         if (this._capturedEventHandlerId) {
-            global.stage.disconnect(this._capturedEventHandlerId);
+            global.stage.disconnect(
+                this._capturedEventHandlerId
+            );
+
             this._capturedEventHandlerId = 0;
         }
 
         if (this._buttonPressHandlerId) {
-            global.stage.disconnect(this._buttonPressHandlerId);
+            global.stage.disconnect(
+                this._buttonPressHandlerId
+            );
+
             this._buttonPressHandlerId = 0;
         }
 
-        if (this._visibilitySignalId && Main.keyboard) {
-            Main.keyboard.disconnect(this._visibilitySignalId);
+        /*
+         * Disconnect the keyboard visibility signal.
+         */
+        if (
+            this._visibilitySignalId &&
+            Main.keyboard
+        ) {
+            Main.keyboard.disconnect(
+                this._visibilitySignalId
+            );
+
             this._visibilitySignalId = 0;
         }
 
-        // Restore all method overrides installed through InjectionManager.
+        /*
+         * Restore all InjectionManager overrides.
+         */
         if (this._injectionManager) {
             this._injectionManager.clear();
             this._injectionManager = null;
         }
 
-        // Restore the private touchscreen detector only if our override is
-        // still installed, avoiding an unconditional overwrite of another
-        // extension's change.
+        /*
+         * Restore the private touchscreen callback, but only when it is still
+         * our override. This avoids blindly overwriting a change made by
+         * another extension.
+         */
         if (
             Main.keyboard &&
             this._lastDeviceIsTouchscreenOverride &&
@@ -391,7 +488,14 @@ export default class OskFixExtension extends Extension {
         this._lastDeviceIsTouchscreenOverride = null;
         this._originalLastDeviceIsTouchscreen = null;
 
-        if (this._didOverrideOsk && this._a11y) {
+        /*
+         * Restore the user's original accessibility setting only when this
+         * extension changed it.
+         */
+        if (
+            this._didOverrideOsk &&
+            this._a11y
+        ) {
             this._a11y.set_boolean(
                 'screen-keyboard-enabled',
                 this._originalOskEnabled
@@ -402,6 +506,9 @@ export default class OskFixExtension extends Extension {
 
         this._a11y = null;
 
+        /*
+         * Keep GNOME's keyboard state clean after disabling the extension.
+         */
         if (Main.keyboard?.visible)
             Main.keyboard.close();
     }
@@ -413,7 +520,10 @@ export default class OskFixExtension extends Extension {
             if (cur instanceof Clutter.Text)
                 return true;
 
-            cur = cur.get_parent ? cur.get_parent() : null;
+            cur =
+                typeof cur.get_parent === 'function'
+                    ? cur.get_parent()
+                    : null;
         }
 
         return false;
