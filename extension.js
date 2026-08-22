@@ -8,7 +8,6 @@ import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 const POINTER_PRESS_TYPES = new Set([
     Clutter.EventType.BUTTON_PRESS,
 ]);
-const PASSWORD_PURPOSE = Clutter.InputContentPurpose.PASSWORD;
 
 export default class OskFixExtension extends Extension {
     enable() {
@@ -157,8 +156,6 @@ export default class OskFixExtension extends Extension {
 
             if (event.type() !== Clutter.EventType.BUTTON_PRESS) return false;
 
-            if (this._isPasswordFocused()) return false;
-
             if (!Main.keyboard.visible && !this._userHidden) {
                 Main.keyboard.open(Main.layoutManager.focusIndex);
             }
@@ -225,9 +222,7 @@ export default class OskFixExtension extends Extension {
             if (!visible && !requested &&
                 ((isNewFocus && wasUserInitiated) || recentClick) &&
                 !this._userHidden && !this._hideButtonPressed) {
-                if (!this._isPasswordFocused()) {
-                    Main.keyboard.open(Main.layoutManager.focusIndex);
-                }
+                Main.keyboard.open(Main.layoutManager.focusIndex);
             }
         } else if (!hasFocus && visible) {
             Main.keyboard.close();
@@ -306,16 +301,4 @@ export default class OskFixExtension extends Extension {
         return false;
     }
 
-    _isPasswordFocused() {
-        try {
-            const focus = Main.inputMethod?.currentFocus;
-            if (!focus) return false;
-            
-            const purpose = focus.content_purpose ?? focus.contentPurpose;
-            return purpose === PASSWORD_PURPOSE;
-        } catch (e) {
-            console.error('[osk-fix] Error checking password purpose:', e);
-            return false;
-        }
-    }
 }
