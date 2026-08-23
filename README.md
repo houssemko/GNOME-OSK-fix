@@ -7,16 +7,6 @@ A GNOME Shell extension that forces the native on-screen keyboard (OSK) to appea
 
 ## Installation
 
-### From extensions.gnome.org
-
-1. Visit the [extension page](https://extensions.gnome.org/extension/XXXX/osk-fix/) *(link works once the extension is approved)*
-2. Toggle the switch and accept the browser prompt
-3. The extension is installed and enabled immediately
-
-### Via Extension Manager
-
-Install [Extension Manager](https://flathub.org/apps/com.mattjakeman.ExtensionManager) from Flathub or your software center, then search for "OSK Fix" in its Browse tab.
-
 ### Manual
 
 ```bash
