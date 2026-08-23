@@ -1,6 +1,6 @@
 # OSK Fix
 
-A GNOME Shell extension that forces the native on-screen keyboard (OSK) to appear in **native Wayland** applications that don't normally trigger it.
+A GNOME Shell extension that forces the native on-screen keyboard (OSK) to appear in applications that don't normally trigger it.
 
 > Only tested on GNOME 50.
 > **XWayland applications are not supported yet.**

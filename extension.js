@@ -261,7 +261,6 @@ export default class OskFixExtension extends Extension {
         return false;
     }
 
-
     _a11yOskEnabled() {
         return !!(Main.keyboard && Main.keyboard._keyboard);
     }
