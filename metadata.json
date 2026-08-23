@@ -1,7 +1,7 @@
 {
     "uuid": "osk-fix@houssemko.github.io",
     "name": "OSK Fix",
-    "description": "Forces the native on-screen keyboard to appear in applications that don't trigger it (Chromium, Vivaldi, Firefox, Electron under XWayland).\n\nWhile active, this extension temporarily enables the accessibility 'Screen Keyboard' setting and restores it on disable.\n\nTested on GNOME 50.",
+    "description": "Forces the native on-screen keyboard to appear in applications that don't trigger it.\n\nTested on GNOME 50.",
     "shell-version": [
         "50"
     ],

@@ -50,10 +50,6 @@ export default class OskFixExtension extends Extension {
             );
         }
 
-        /*
-         * We need stage-level pointer handling because GNOME's OSK event
-         * hierarchy is not reliable for identifying OSK clicks
-         */
         this._capturedEventHandlerId = global.stage.connect(
             'captured-event',
             (actor, event) => this._onCapturedEvent(actor, event)
@@ -198,19 +194,9 @@ export default class OskFixExtension extends Extension {
                     this._userHidden = true;
                 }
 
-                /*
-                 * Never treat a click on an OSK key as a click on a normal
-                 * text input.
-                 */
                 return;
             }
 
-            /*
-             * Pointer press outside the OSK.
-             *
-             * A later focus event/polling cycle can use this timestamp to
-             * determine whether the user interacted with a text field.
-             */
             this._lastPointerPressTime = Date.now();
             this._userHidden = false;
             this._hideButtonPressed = false;
@@ -275,25 +261,14 @@ export default class OskFixExtension extends Extension {
         return false;
     }
 
-    /**
-     * The extension only activates when the user has turned Screen Keyboard
-     * on in GNOME's Accessibility settings. Read live so toggling the
-     * switch takes effect immediately without reloading.
-     */
-    /**
-     * The extension only activates when the OSK subsystem exists - which
-     * GNOME creates/destroys based on the user's Screen Keyboard toggle.
-     * Detecting via widget existence avoids any GSettings access.
-     */
+
     _a11yOskEnabled() {
         return !!(Main.keyboard && Main.keyboard._keyboard);
     }
 
     _maybeHandleEvent(event, originalMethod) {
         try {
-            /*
-             * Preserve GNOME's original event handling first.
-             */
+
             const handled = originalMethod
                 ? originalMethod.call(Main.keyboard, event)
                 : false;
@@ -312,10 +287,6 @@ export default class OskFixExtension extends Extension {
             if (event.type() !== Clutter.EventType.BUTTON_PRESS)
                 return false;
 
-            /*
-             * If a text actor receives a button press while the OSK is hidden,
-             * reopen it unless the user explicitly dismissed it.
-             */
             if (
                 !Main.keyboard.visible &&
                 !this._userHidden &&
@@ -418,18 +389,12 @@ export default class OskFixExtension extends Extension {
     }
 
     disable() {
-        /*
-         * Stop polling first so no new callbacks execute while the extension
-         * is being torn down.
-         */
+
         if (this._pollId) {
             GLib.source_remove(this._pollId);
             this._pollId = 0;
         }
 
-        /*
-         * Disconnect global stage signals.
-         */
         if (this._capturedEventHandlerId) {
             global.stage.disconnect(
                 this._capturedEventHandlerId
@@ -446,9 +411,7 @@ export default class OskFixExtension extends Extension {
             this._buttonPressHandlerId = 0;
         }
 
-        /*
-         * Disconnect the keyboard visibility signal.
-         */
+
         if (
             this._visibilitySignalId &&
             Main.keyboard
@@ -460,19 +423,12 @@ export default class OskFixExtension extends Extension {
             this._visibilitySignalId = 0;
         }
 
-        /*
-         * Restore all InjectionManager overrides.
-         */
+
         if (this._injectionManager) {
             this._injectionManager.clear();
             this._injectionManager = null;
         }
 
-        /*
-         * Restore the private touchscreen callback, but only when it is still
-         * our override. This avoids blindly overwriting a change made by
-         * another extension.
-         */
         if (
             Main.keyboard &&
             this._lastDeviceIsTouchscreenOverride &&
@@ -486,9 +442,6 @@ export default class OskFixExtension extends Extension {
         this._lastDeviceIsTouchscreenOverride = null;
         this._originalLastDeviceIsTouchscreen = null;
 
-        /*
-         * Keep GNOME's keyboard state clean after disabling the extension.
-         */
         if (Main.keyboard?.visible)
             Main.keyboard.close();
     }
