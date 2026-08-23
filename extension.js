@@ -3,7 +3,7 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
-import {Keyboard} from 'resource:///org/gnome/shell/ui/keyboard.js';
+import { Keyboard } from 'resource:///org/gnome/shell/ui/keyboard.js';
 import {
     Extension,
     InjectionManager,
@@ -57,8 +57,7 @@ export default class OskFixExtension extends Extension {
 
         /*
          * We need stage-level pointer handling because GNOME's OSK event
-         * hierarchy is not reliable for identifying OSK clicks on all
-         * supported Shell versions.
+         * hierarchy is not reliable for identifying OSK clicks
          */
         this._capturedEventHandlerId = global.stage.connect(
             'captured-event',
@@ -288,7 +287,7 @@ export default class OskFixExtension extends Extension {
      */
     _a11yOskEnabled() {
         try {
-            return this._a11y.get_boolean('screen-keyboard-enabled');
+            return this._a11y ? this._a11y.get_boolean('screen-keyboard-enabled') : false;
         } catch (e) {
             return false;
         }
