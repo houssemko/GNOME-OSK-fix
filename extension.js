@@ -1,5 +1,4 @@
 import Clutter from 'gi://Clutter';
-import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
@@ -28,10 +27,6 @@ export default class OskFixExtension extends Extension {
         this._lastPointerPressTime = 0;
         this._prevVisible = false;
         this._prevInputFocus = null;
-
-        this._a11y = new Gio.Settings({
-            schema_id: 'org.gnome.desktop.a11y.applications',
-        });
 
         this._injectionManager = new InjectionManager();
 
@@ -285,12 +280,13 @@ export default class OskFixExtension extends Extension {
      * on in GNOME's Accessibility settings. Read live so toggling the
      * switch takes effect immediately without reloading.
      */
+    /**
+     * The extension only activates when the OSK subsystem exists - which
+     * GNOME creates/destroys based on the user's Screen Keyboard toggle.
+     * Detecting via widget existence avoids any GSettings access.
+     */
     _a11yOskEnabled() {
-        try {
-            return this._a11y ? this._a11y.get_boolean('screen-keyboard-enabled') : false;
-        } catch (e) {
-            return false;
-        }
+        return !!(Main.keyboard && Main.keyboard._keyboard);
     }
 
     _maybeHandleEvent(event, originalMethod) {
@@ -489,8 +485,6 @@ export default class OskFixExtension extends Extension {
 
         this._lastDeviceIsTouchscreenOverride = null;
         this._originalLastDeviceIsTouchscreen = null;
-
-        this._a11y = null;
 
         /*
          * Keep GNOME's keyboard state clean after disabling the extension.
