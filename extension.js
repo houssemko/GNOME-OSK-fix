@@ -40,6 +40,7 @@ export default class OskFixExtension extends Extension {
 
         this._userHidden = false;
         this._hideButtonPressed = false;
+        this._weClosedIt = false;
         this._lastPointerPressTime = 0;
         this._lastDeviceWasPointer = true;
         this._prevVisible = false;
@@ -210,6 +211,40 @@ export default class OskFixExtension extends Extension {
 
                         console.error('[osk-fix] open() passed gate');
                         return originalMethod.call(this, ...args);
+                    };
+                }
+            );
+        }
+
+        /*
+         * Gate the widget close as well: GNOME's _onKeyFocusChanged closes
+         * the OSK whenever stage key-focus is not a Clutter.Text - always
+         * true while typing into Wayland/XWayland clients. Suppress that
+         * churn-close unless the user dismissed it (flags) or our poll
+         * closed it due to real focus loss.
+         */
+        if (
+            Keyboard.prototype &&
+            typeof Keyboard.prototype.close === 'function'
+        ) {
+            const extension = this;
+
+            this._injectionManager.overrideMethod(
+                Keyboard.prototype,
+                'close',
+                originalMethod => {
+                    return function (...args) {
+                        const userDismissed =
+                            extension._userHidden ||
+                            extension._hideButtonPressed;
+                        const ours = extension._weClosedIt;
+
+                        if (!userDismissed && !ours && extension._inputStillFocused()) {
+                            console.error('[osk-fix] suppressed key-focus churn close');
+                            return undefined;
+                        }
+
+                        return originalMethod.apply(this, args);
                     };
                 }
             );
@@ -453,6 +488,7 @@ export default class OskFixExtension extends Extension {
                 );
             }
         } else if (!hasFocus && visible) {
+            this._weClosedIt = true;
             keyboard.close();
             this._prevInputFocus = focus;
         }
@@ -523,6 +559,18 @@ export default class OskFixExtension extends Extension {
 
         if (Main.keyboard?.visible)
             Main.keyboard.close();
+    }
+
+    _inputStillFocused() {
+        const focus = Main.inputMethod?.currentFocus;
+        if (!focus)
+            return false;
+
+        try {
+            return !!focus.is_focused();
+        } catch (e) {
+            return true;
+        }
     }
 
     _actorIsText(actor) {
