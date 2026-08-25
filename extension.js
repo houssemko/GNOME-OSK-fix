@@ -496,9 +496,9 @@ export default class OskFixExtension extends Extension {
             if (isNewFocus)
                 this._prevInputFocus = focus;
 
-            if (DEBUG && !visible)
-                console.error(`[osk-fix] tick: newF=${isNewFocus} ptr=${this._lastDeviceWasPointer} ` +
-                    `uH=${this._userHidden} hbp=${this._hideButtonPressed} ` +
+            if (DEBUG)
+                console.error(`[osk-fix] tick: hf=${hasFocus} newF=${isNewFocus} vis=${visible} ` +
+                    `ptr=${this._lastDeviceWasPointer} uH=${this._userHidden} hbp=${this._hideButtonPressed} ` +
                     `a11y=${this._a11yOskEnabled()} req=${requested}`);
 
             const timeSinceInteraction = this._lastPointerPressTime > 0
