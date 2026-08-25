@@ -8,6 +8,9 @@ import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 
 const POINTER_PRESS_TYPES = new Set([
     Clutter.EventType.BUTTON_PRESS,
+    // Vivaldi/Chromium emits SCROLL bursts on text-field clicks - treat
+    // them as interaction signals so the OSK trigger works there too.
+    Clutter.EventType.SCROLL,
 ]);
 const DEBUG = true; // TEMPORARY
 
