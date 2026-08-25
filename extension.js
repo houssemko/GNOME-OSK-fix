@@ -436,9 +436,7 @@ export default class OskFixExtension extends Extension {
                 !this._hideButtonPressed &&
                 this._a11yOskEnabled()
             ) {
-                Main.keyboard.open(
-                    Main.layoutManager.focusIndex
-                );
+                Main.keyboard?._keyboard?.open(true);
             }
         } catch (e) {
             console.error(
