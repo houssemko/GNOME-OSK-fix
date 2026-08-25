@@ -83,22 +83,59 @@ export default class OskFixExtension extends Extension {
     }
 
     _onCapturedEvent(actor, event) {
-        if (!POINTER_PRESS_TYPES.has(event.type())) return;
+        try {
+            if (!POINTER_PRESS_TYPES.has(event.type()))
+                return;
 
-        this._lastPointerPressTime = Date.now();
+            const [x, y] = event.get_coords();
 
-        // Only the hide button counts - not any OSK keypress
-        const keyboardActor = Main.keyboard?._keyboard;
-        if (keyboardActor && this._isDescendant(actor, keyboardActor)) {
-            if (this._isHideButton(actor)) {
-                this._hideButtonPressed = true;
+            /*
+             * Actor-hierarchy checks fail on GNOME 50.4 (pressed OSK keys
+             * arrive with Meta_Stage as the event actor), so decide
+             * "is this press on the OSK?" using stage coordinates.
+             */
+            const kbd = Main.keyboard?._keyboard;
+
+            let pressOnOsk = false;
+
+            if (kbd && kbd.visible) {
+                const monitor =
+                    Main.layoutManager.keyboardMonitor ||
+                    Main.layoutManager.primaryMonitor;
+
+                if (monitor) {
+                    const h =
+                        kbd.get_transformed_size()[1] || kbd.height;
+                    const topY =
+                        monitor.y + monitor.height - h;
+
+                    pressOnOsk =
+                        x >= monitor.x &&
+                        x <= monitor.x + monitor.width &&
+                        y >= topY;
+                }
             }
-            return;
-        }
 
-        if (this._actorIsText(actor)) {
+            if (pressOnOsk) {
+                const isHide = this._isHideButton(actor);
+
+                if (isHide) {
+                    this._hideButtonPressed = true;
+                    this._userHidden = true;
+                }
+
+                return;
+            }
+
+            // Press outside the OSK: record click time and lift hidden state
+            this._lastPointerPressTime = Date.now();
             this._userHidden = false;
             this._hideButtonPressed = false;
+        } catch (e) {
+            console.error(
+                '[osk-fix] Error in captured event handler:',
+                e
+            );
         }
     }
 
