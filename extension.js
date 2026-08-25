@@ -507,7 +507,9 @@ export default class OskFixExtension extends Extension {
             if (DEBUG)
                 console.error(`[osk-fix] tick: hf=${hasFocus} newF=${isNewFocus} vis=${visible} ` +
                     `ptr=${this._lastDeviceWasPointer} uH=${this._userHidden} hbp=${this._hideButtonPressed} ` +
-                    `a11y=${this._a11yOskEnabled()} req=${requested}`);
+                    `a11y=${this._a11yOskEnabled()} req=${requested} ` +
+                    `wVis=${kbd._keyboardVisible} wReq=${kbd._keyboardRequested} ` +
+                    `box=${Main.layoutManager.keyboardBox.visible} mapped=${kbd.mapped}`);
 
             const timeSinceInteraction = this._lastPointerPressTime > 0
                 ? Date.now() - this._lastPointerPressTime : Infinity;
