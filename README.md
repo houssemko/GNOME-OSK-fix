@@ -26,10 +26,6 @@ gnome-extensions enable osk-fix@houssemko.github.io
 
 > **Note:** log out and back in after enabling (Wayland cannot restart GNOME Shell in-place).
 
-### From extensions.gnome.org
-
-*Coming soon — pending review.*
-
 ## Activation
 
 The extension is active only while *Settings → Accessibility → Screen Keyboard* is ON. Toggling it takes effect immediately — no reload needed.
