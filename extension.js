@@ -422,8 +422,6 @@ export default class OskFixExtension extends Extension {
                     `uH=${this._userHidden} hbp=${this._hideButtonPressed} ` +
                     `a11y=${this._a11yOskEnabled()} req=${requested}`);
 
-            const recentClick =
-
             const timeSinceInteraction = this._lastPointerPressTime > 0
                 ? Date.now() - this._lastPointerPressTime : Infinity;
             const recentClick = timeSinceInteraction < 600;
