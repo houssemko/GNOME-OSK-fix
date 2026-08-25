@@ -10,6 +10,9 @@ import {
 
 const POINTER_PRESS_TYPES = new Set([
     Clutter.EventType.BUTTON_PRESS,
+    // Mutter delivers some client-window presses as synthesized touch
+    // events (observed: Vivaldi text fields arrive as TOUCH_BEGIN).
+    Clutter.EventType.TOUCH_BEGIN,
 ]);
 const DEBUG = true; // TEMPORARY
 /*
