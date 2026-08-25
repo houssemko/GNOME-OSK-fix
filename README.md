@@ -7,27 +7,32 @@ A GNOME Shell extension that forces the native on-screen keyboard (OSK) to appea
 
 ## Installation
 
+### One-line install
+
+```bash
+curl -sSL https://raw.githubusercontent.com/houssemko/osk-fix/main/install.sh | bash
+```
+
 ### Manual
 
 ```bash
-# Clone the repository
 git clone https://github.com/houssemko/osk-fix.git
 cd osk-fix
-
-# Copy to the local extensions directory
 mkdir -p ~/.local/share/gnome-shell/extensions/osk-fix@houssemko.github.io
-cp extension.js metadata.json README.md LICENSE    ~/.local/share/gnome-shell/extensions/osk-fix@houssemko.github.io/
-
-# Enable it
+cp extension.js metadata.json README.md LICENSE \
+   ~/.local/share/gnome-shell/extensions/osk-fix@houssemko.github.io/
 gnome-extensions enable osk-fix@houssemko.github.io
 ```
 
-> **Note:** on Wayland, GNOME Shell cannot be restarted in-place — log out
-> and back in if the extension doesn't appear after enabling.
+> **Note:** log out and back in after enabling (Wayland cannot restart GNOME Shell in-place).
+
+### From extensions.gnome.org
+
+*Coming soon — pending review.*
 
 ## Activation
 
-The extension is active only while *Settings → Accessibility → Screen Keyboard* is ON. Toggling it takes effect immediately.
+The extension is active only while *Settings → Accessibility → Screen Keyboard* is ON. Toggling it takes effect immediately — no reload needed.
 
 ## License
 
