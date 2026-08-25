@@ -39,9 +39,6 @@ export default class OskFixExtension extends Extension {
             return;
         }
 
-        // GNOME only shows the native OSK at all if this a11y setting is on.
-        // Set it once on enable, restore the original value on disable —
-        // do NOT re-enforce it against later user changes while running.
         this._a11y = new Gio.Settings({ schema_id: 'org.gnome.desktop.a11y.applications' });
         this._originalOskEnabled = this._a11y.get_boolean('screen-keyboard-enabled');
         if (!this._originalOskEnabled) {
@@ -112,11 +109,6 @@ export default class OskFixExtension extends Extension {
             );
         }
 
-        /*
-         * Single override point for open(): every caller — GNOME's own
-         * internal logic, our poll loop, our event handler — goes through
-         * this one veto.
-         */
         const openTarget =
             keyboardPrototype && typeof keyboardPrototype.open === 'function'
                 ? keyboardPrototype
@@ -176,9 +168,6 @@ export default class OskFixExtension extends Extension {
         }
     }
 
-    /**
-     * Best-effort identification of the OSK's own hide/close control.
-     */
     _isHideButton(actor) {
         let cur = actor;
         while (cur) {
