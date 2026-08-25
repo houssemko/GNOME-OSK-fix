@@ -485,7 +485,6 @@ export default class OskFixExtension extends Extension {
 
         if (visible && !this._prevVisible)
             this._lastPointerPressTime = 0;
-        this._lastDeviceWasPointer = true;
 
         this._prevVisible = visible;
 
@@ -526,10 +525,16 @@ export default class OskFixExtension extends Extension {
             const sameFieldReClick = !isNewFocus && recentClick;
             const newFieldWithIntent = isNewFocus && wasUserInitiated;
 
+            /*
+             * Stale-request recovery: GNOME can latch _keyboardRequested
+             * without ever completing the show animation (half-open zombie,
+             * seen on GNOME 50.4). Clear it so subsequent opens work.
+             */
+            if (requested && !visible)
+                kbd._keyboardRequested = false;
+
             if (
                 !visible &&
-                !requested &&
-                this._lastDeviceWasPointer &&
                 (sameFieldReClick || newFieldWithIntent) &&
                 !this._userHidden &&
                 !this._hideButtonPressed &&
