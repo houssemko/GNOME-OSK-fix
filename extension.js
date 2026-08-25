@@ -12,6 +12,22 @@ const POINTER_PRESS_TYPES = new Set([
     Clutter.EventType.BUTTON_PRESS,
 ]);
 const DEBUG = true; // TEMPORARY
+/*
+ * DEBUG log legend:
+ *   device -> pointer=true/false        Input device switched; true means
+ *                                       mouse/pointer is now the active device.
+ *   outside press - flags lifted        Click detected outside the OSK; hidden
+ *                                       state cleared, click timestamp armed.
+ *   tick: newF=… ptr=… uH=… hbp=… a11y=… req=…
+ *                                       Poll decision state: new focus object,
+ *                                       last-device-was-pointer, user-hidden
+ *                                       flag, hide-button flag, accessibility
+ *                                       toggle, native requested flag.
+ *   open blocked: uH=… hbp=… a11y=…     An open() call reached a wrapper but
+ *                                       was suppressed - shows which flag.
+ *   open() passed gate                  A wrapper allowed open() through to GNOME.
+ *   OPEN called                         The poll decided to show the OSK.
+ */
 export default class OskFixExtension extends Extension {
     enable() {
         this._pollId = 0;
