@@ -3,6 +3,8 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+
+const logError = global.logError || ((e, msg) => console.error(msg, e));
 import { Keyboard } from 'resource:///org/gnome/shell/ui/keyboard.js';
 import {
     Extension,
@@ -164,7 +166,7 @@ export default class OskFixExtension extends Extension {
             this._userHidden = false;
             this._hideButtonPressed = false;
         } catch (e) {
-            console.error('[osk-fix] Error in captured event handler:', e);
+            logError(e, '[osk-fix] Error in captured event handler');
         }
     }
 
@@ -220,7 +222,7 @@ export default class OskFixExtension extends Extension {
                 Main.keyboard.open(Main.layoutManager.focusIndex);
             }
         } catch (e) {
-            console.error('[osk-fix] Error in _maybeHandleEvent:', e);
+            logError(e, '[osk-fix] Error in _maybeHandleEvent');
         }
         return false;
     }
@@ -229,7 +231,7 @@ export default class OskFixExtension extends Extension {
         try {
             this._poll();
         } catch (e) {
-            console.error('[osk-fix] Exception during poll cycle:', e);
+            logError(e, '[osk-fix] Exception during poll cycle');
         }
     }
 
@@ -244,7 +246,7 @@ export default class OskFixExtension extends Extension {
             try {
                 hasFocus = !!focus.is_focused();
             } catch (e) {
-                console.error('[osk-fix] Error checking focus state:', e);
+                logError(e, '[osk-fix] Error checking focus state');
                 hasFocus = !!focus;
             }
         }
