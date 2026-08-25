@@ -294,15 +294,26 @@ export default class OskFixExtension extends Extension {
 
             let pressOnOsk = false;
 
+            /*
+             * get_transformed_position()/size() return stale values on
+             * GNOME 50.4, so anchor the OSK rectangle to monitor geometry:
+             * the OSK always docks to the bottom edge, full width. Only
+             * the height comes from the widget.
+             */
             if (kbd && kbd.visible) {
-                const [sx, sy] = kbd.get_transformed_position();
-                const [w, h] = kbd.get_transformed_size();
+                const monitor =
+                    Main.layoutManager.keyboardMonitor ||
+                    Main.layoutManager.primaryMonitor;
 
-                pressOnOsk =
-                    x >= sx &&
-                    x <= sx + w &&
-                    y >= sy &&
-                    y <= sy + h;
+                if (monitor) {
+                    const h = kbd.get_transformed_size()[1] || kbd.height;
+                    const topY = monitor.y + monitor.height - h;
+
+                    pressOnOsk =
+                        x >= monitor.x &&
+                        x <= monitor.x + monitor.width &&
+                        y >= topY;
+                }
             }
 
             if (pressOnOsk) {
