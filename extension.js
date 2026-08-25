@@ -24,7 +24,6 @@ export default class OskFixExtension extends Extension {
         this._prevKeyFocusActor = null;
         this._prevInputFocus = null;
         this._capturedEventHandlerId = 0;
-        this._buttonPressHandlerId = 0;
         this._keyFocusHandlerId = 0;
         this._didOverrideOsk = false;
 
@@ -61,10 +60,6 @@ export default class OskFixExtension extends Extension {
             'captured-event',
             (actor, event) => this._onCapturedEvent(actor, event)
         );
-        this._buttonPressHandlerId = global.stage.connect(
-            'button-press-event',
-            (actor, event) => this._onCapturedEvent(actor, event)
-        );
 
         try {
             this._keyFocusHandlerId = global.stage.connect('notify::key-focus', () => {
@@ -94,7 +89,7 @@ export default class OskFixExtension extends Extension {
 
         // Only the hide button counts - not any OSK keypress
         const keyboardActor = Main.keyboard?._keyboard;
-        if (keyboardActor && this._isInsideKeyboard(actor, keyboardActor)) {
+        if (keyboardActor && this._isDescendant(actor, keyboardActor)) {
             if (this._isHideButton(actor)) {
                 this._hideButtonPressed = true;
             }
@@ -105,10 +100,6 @@ export default class OskFixExtension extends Extension {
             this._userHidden = false;
             this._hideButtonPressed = false;
         }
-    }
-
-    _isInsideKeyboard(actor, keyboardActor) {
-        return actor === keyboardActor || this._isDescendant(actor, keyboardActor);
     }
 
     _isHideButton(actor) {
@@ -125,18 +116,22 @@ export default class OskFixExtension extends Extension {
     }
 
     _maybeHandleEvent(event) {
-        const handled = this._oldMaybeHandleEvent.call(Main.keyboard, event);
-        if (handled) return true;
+        try {
+            const handled = this._oldMaybeHandleEvent.call(Main.keyboard, event);
+            if (handled) return true;
 
-        if (!Main.keyboard || !Main.keyboard._keyboard) return false;
+            if (!Main.keyboard || !Main.keyboard._keyboard) return false;
 
-        const actor = global.stage.get_event_actor(event);
-        if (!actor || !this._actorIsText(actor)) return false;
+            const actor = global.stage.get_event_actor(event);
+            if (!actor || !this._actorIsText(actor)) return false;
 
-        if (event.type() !== Clutter.EventType.BUTTON_PRESS) return false;
+            if (event.type() !== Clutter.EventType.BUTTON_PRESS) return false;
 
-        if (!Main.keyboard.visible && !this._userHidden) {
-            Main.keyboard.open(Main.layoutManager.focusIndex);
+            if (!Main.keyboard.visible && !this._userHidden) {
+                Main.keyboard.open(Main.layoutManager.focusIndex);
+            }
+        } catch (e) {
+            console.error('[osk-fix] Error in _maybeHandleEvent:', e);
         }
 
         return false;
@@ -209,8 +204,7 @@ export default class OskFixExtension extends Extension {
         }
         if (this._buttonPressHandlerId) {
             global.stage.disconnect(this._buttonPressHandlerId);
-            this._buttonPressHandlerId = 0;
-        }
+            }
 
         if (this._visibilitySignalId && Main.keyboard) {
             Main.keyboard.disconnect(this._visibilitySignalId);
