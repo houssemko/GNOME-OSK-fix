@@ -270,14 +270,6 @@ export default class OskFixExtension extends Extension {
         }
     }
 
-    _isDescendant(actor, ancestor) {
-        let cur = actor;
-        while (cur) {
-            if (cur === ancestor) return true;
-            cur = cur.get_parent ? cur.get_parent() : null;
-        }
-        return false;
-    }
 
     _actorIsText(actor) {
         let cur = actor;
