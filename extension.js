@@ -11,8 +11,6 @@ import {
 const POINTER_PRESS_TYPES = new Set([
     Clutter.EventType.BUTTON_PRESS,
 ]);
-const DEBUG = true; // TEMPORARY - observation round
-
 export default class OskFixExtension extends Extension {
     enable() {
         this._pollId = 0;
@@ -26,6 +24,7 @@ export default class OskFixExtension extends Extension {
         this._userHidden = false;
         this._hideButtonPressed = false;
         this._lastPointerPressTime = 0;
+        this._lastDeviceWasPointer = true;
         this._prevVisible = false;
         this._prevInputFocus = null;
 
@@ -75,43 +74,25 @@ export default class OskFixExtension extends Extension {
             '[osk-fix] poll'
         );
 
-        // --- TEMPORARY observation instrumentation ---
-        this._debugSignalIds = [];
-
-        // Which input device was used last (mouse vs keyboard etc).
+        /*
+         * Track the last input device used. GNOME delivers this signal on
+         * every device switch - including clicks inside Wayland clients,
+         * whose pointer events never reach stage handlers. A pointer/mouse
+         * as the last device therefore means "the user is mousing", which
+         * is our observable proxy for text-field clicks in those apps.
+         */
         if (global.backend?.connect) {
-            this._debugSignalIds.push([
-                global.backend,
-                global.backend.connect('last-device-changed', (backend, device) => {
-                    let type = -1;
-                    let name = '?';
+            this._lastDeviceChangedId = global.backend.connect(
+                'last-device-changed',
+                (backend, device) => {
                     try {
-                        type = device.get_device_type();
-                        name = device.get_device_name();
+                        this._lastDeviceWasPointer =
+                            device.get_device_type() !==
+                            Clutter.InputDeviceType.KEYBOARD_DEVICE;
                     } catch (e) {}
-                    console.error(`[osk-fix][dbg] last-device-changed type=${type} name="${name}"`);
-                })
-            ]);
+                }
+            );
         }
-
-        // IM focus commits (the signal we already rely on via polling).
-        if (Main.inputMethod?.connect) {
-            this._debugSignalIds.push([
-                Main.inputMethod,
-                Main.inputMethod.connect('notify::current-focus', () => {
-                    const f = Main.inputMethod?.currentFocus;
-                    console.error(`[osk-fix][dbg] current-focus changed obj=${!!f}`);
-                })
-            ]);
-
-            this._debugSignalIds.push([
-                Main.inputMethod,
-                Main.inputMethod.connect('cursor-location-changed', () => {
-                    console.error('[osk-fix][dbg] cursor-location-changed');
-                })
-            ]);
-        }
-        // --- end TEMPORARY ---
     }
 
     _installKeyboardOverrides(keyboard) {
@@ -385,6 +366,7 @@ export default class OskFixExtension extends Extension {
 
         if (visible && !this._prevVisible)
             this._lastPointerPressTime = 0;
+        this._lastDeviceWasPointer = true;
 
         this._prevVisible = visible;
 
@@ -404,14 +386,16 @@ export default class OskFixExtension extends Extension {
             if (isNewFocus)
                 this._prevInputFocus = focus;
 
-            const recentClick =
-                this._lastPointerPressTime > 0 &&
-                Date.now() - this._lastPointerPressTime < 500;
-
+            /*
+             * Single trigger: a new editable gained focus while the user's
+             * last input device was the mouse. Keyboard-driven focus (Tab)
+             * and programmatic focus never satisfy both conditions.
+             */
             if (
                 !visible &&
                 !requested &&
-                (isNewFocus || recentClick) &&
+                isNewFocus &&
+                this._lastDeviceWasPointer &&
                 !this._userHidden &&
                 !this._hideButtonPressed &&
                 this._a11yOskEnabled()
