@@ -11,6 +11,7 @@ import {
 const POINTER_PRESS_TYPES = new Set([
     Clutter.EventType.BUTTON_PRESS,
 ]);
+const DEBUG = true; // TEMPORARY
 export default class OskFixExtension extends Extension {
     enable() {
         this._pollId = 0;
@@ -89,6 +90,8 @@ export default class OskFixExtension extends Extension {
                         this._lastDeviceWasPointer =
                             device.get_device_type() !==
                             Clutter.InputDeviceType.KEYBOARD_DEVICE;
+                        if (DEBUG)
+                            console.error(`[osk-fix] device -> pointer=${this._lastDeviceWasPointer}`);
                     } catch (e) {}
                 }
             );
@@ -150,9 +153,15 @@ export default class OskFixExtension extends Extension {
                             extension._hideButtonPressed ||
                             !extension._a11yOskEnabled()
                         ) {
+                            console.error(
+                                `[osk-fix] open blocked: uH=${extension._userHidden} ` +
+                                `hbp=${extension._hideButtonPressed} ` +
+                                `a11y=${extension._a11yOskEnabled()}`
+                            );
                             return undefined;
                         }
 
+                        console.error('[osk-fix] open() passed gate');
                         return originalMethod.call(this, ...args);
                     };
                 }
@@ -175,9 +184,15 @@ export default class OskFixExtension extends Extension {
                             extension._hideButtonPressed ||
                             !extension._a11yOskEnabled()
                         ) {
+                            console.error(
+                                `[osk-fix] open blocked: uH=${extension._userHidden} ` +
+                                `hbp=${extension._hideButtonPressed} ` +
+                                `a11y=${extension._a11yOskEnabled()}`
+                            );
                             return undefined;
                         }
 
+                        console.error('[osk-fix] open() passed gate');
                         return originalMethod.call(this, ...args);
                     };
                 }
@@ -386,6 +401,13 @@ export default class OskFixExtension extends Extension {
             if (isNewFocus)
                 this._prevInputFocus = focus;
 
+            if (DEBUG && !visible)
+                console.error(`[osk-fix] tick: newF=${isNewFocus} ptr=${this._lastDeviceWasPointer} ` +
+                    `uH=${this._userHidden} hbp=${this._hideButtonPressed} ` +
+                    `a11y=${this._a11yOskEnabled()} req=${requested}`);
+
+            const recentClick =
+
             const timeSinceInteraction = this._lastPointerPressTime > 0
                 ? Date.now() - this._lastPointerPressTime : Infinity;
             const recentClick = timeSinceInteraction < 600;
@@ -411,6 +433,7 @@ export default class OskFixExtension extends Extension {
                 !this._hideButtonPressed &&
                 this._a11yOskEnabled()
             ) {
+                if (DEBUG) console.error('[osk-fix] OPEN called');
                 keyboard.open(
                     Main.layoutManager.focusIndex
                 );
