@@ -148,7 +148,11 @@ export default class OskFixExtension extends Extension {
                 Main.layoutManager.keyboardMonitor ||
                 Main.layoutManager.primaryMonitor;
 
+            const isPhantom =
+                x < 2 && y < 2;
+
             const validCoords =
+                !isPhantom &&
                 monitor &&
                 x >= monitor.x &&
                 x <= monitor.x + monitor.width &&
@@ -264,7 +268,13 @@ export default class OskFixExtension extends Extension {
                 console.error(`[osk-fix] poll: recentClick w/ field focused, hidden=${this._userHidden || this._hideButtonPressed} req=${requested}`);
             }
 
-            if (!visible && !requested && (isNewFocus || recentClick) && !this._userHidden && !this._hideButtonPressed) {
+            /*
+             * Click-only opening: requires recentClick (armed by a
+             * validated pointer press). isNewFocus alone never opens -
+             * this prevents Tab-navigation and page-load autofocus from
+             * popping the OSK.
+             */
+            if (!visible && !requested && recentClick && !this._userHidden && !this._hideButtonPressed) {
                 if (DEBUG) console.error('[osk-fix] OPEN called');
                 Main.keyboard.open(Main.layoutManager.focusIndex);
             }
