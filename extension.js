@@ -17,7 +17,6 @@ export default class OskFixExtension extends Extension {
         this._pollId = 0;
         this._visibilitySignalId = 0;
         this._capturedEventHandlerId = 0;
-        this._buttonPressHandlerId = 0;
 
         this._originalLastDeviceIsTouchscreen = null;
         this._lastDeviceIsTouchscreenOverride = null;
@@ -52,11 +51,6 @@ export default class OskFixExtension extends Extension {
 
         this._capturedEventHandlerId = global.stage.connect(
             'captured-event',
-            (actor, event) => this._onCapturedEvent(actor, event)
-        );
-
-        this._buttonPressHandlerId = global.stage.connect(
-            'button-press-event',
             (actor, event) => this._onCapturedEvent(actor, event)
         );
 
@@ -128,7 +122,7 @@ export default class OskFixExtension extends Extension {
                         if (
                             extension._userHidden ||
                             extension._hideButtonPressed ||
-                            !extension._a11yOskEnabled()
+                            !extension._oskAvailable()
                         ) {
                             return undefined;
                         }
@@ -153,7 +147,7 @@ export default class OskFixExtension extends Extension {
                         if (
                             extension._userHidden ||
                             extension._hideButtonPressed ||
-                            !extension._a11yOskEnabled()
+                            !extension._oskAvailable()
                         ) {
                             return undefined;
                         }
@@ -261,13 +255,12 @@ export default class OskFixExtension extends Extension {
         return false;
     }
 
-    _a11yOskEnabled() {
+    _oskAvailable() {
         return !!(Main.keyboard && Main.keyboard._keyboard);
     }
 
     _maybeHandleEvent(event, originalMethod) {
         try {
-
             const handled = originalMethod
                 ? originalMethod.call(Main.keyboard, event)
                 : false;
@@ -289,8 +282,7 @@ export default class OskFixExtension extends Extension {
             if (
                 !Main.keyboard.visible &&
                 !this._userHidden &&
-                !this._hideButtonPressed &&
-                this._a11yOskEnabled()
+                !this._hideButtonPressed
             ) {
                 Main.keyboard.open(
                     Main.layoutManager.focusIndex
@@ -374,8 +366,7 @@ export default class OskFixExtension extends Extension {
                 !requested &&
                 (isNewFocus || recentClick) &&
                 !this._userHidden &&
-                !this._hideButtonPressed &&
-                this._a11yOskEnabled()
+                !this._hideButtonPressed
             ) {
                 keyboard.open(
                     Main.layoutManager.focusIndex
@@ -402,15 +393,6 @@ export default class OskFixExtension extends Extension {
             this._capturedEventHandlerId = 0;
         }
 
-        if (this._buttonPressHandlerId) {
-            global.stage.disconnect(
-                this._buttonPressHandlerId
-            );
-
-            this._buttonPressHandlerId = 0;
-        }
-
-
         if (
             this._visibilitySignalId &&
             Main.keyboard
@@ -421,7 +403,6 @@ export default class OskFixExtension extends Extension {
 
             this._visibilitySignalId = 0;
         }
-
 
         if (this._injectionManager) {
             this._injectionManager.clear();
