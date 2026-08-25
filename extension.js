@@ -271,7 +271,16 @@ export default class OskFixExtension extends Extension {
                             extension._hideButtonPressed;
                         const ours = extension._weClosedIt;
 
-                        if (!userDismissed && !ours && extension._inputStillFocused()) {
+                        /*
+                         * Gate on existence of an IM focus target - NOT on
+                         * is_focused(): during Wayland IM churn the focus
+                         * object briefly reports unfocused, which let this
+                         * native close slip through mid-typing.
+                         */
+                        const imEngaged =
+                            !!Main.inputMethod?.currentFocus;
+
+                        if (!userDismissed && !ours && imEngaged) {
                             console.error('[osk-fix] suppressed key-focus churn close');
                             return undefined;
                         }
@@ -611,17 +620,6 @@ export default class OskFixExtension extends Extension {
             Main.keyboard.close();
     }
 
-    _inputStillFocused() {
-        const focus = Main.inputMethod?.currentFocus;
-        if (!focus)
-            return false;
-
-        try {
-            return !!focus.is_focused();
-        } catch (e) {
-            return true;
-        }
-    }
 
     _actorIsText(actor) {
         let cur = actor;
