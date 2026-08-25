@@ -405,7 +405,7 @@ export default class OskFixExtension extends Extension {
             if (
                 !visible &&
                 !requested &&
-                lastDeviceWasPointer &&
+                this._lastDeviceWasPointer &&
                 (sameFieldReClick || newFieldWithIntent) &&
                 !this._userHidden &&
                 !this._hideButtonPressed &&
