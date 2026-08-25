@@ -95,6 +95,35 @@ export default class OskFixExtension extends Extension {
             '[osk-fix] poll'
         );
 
+        // --- TEMPORARY full event tap: identify Vivaldi's click event ---
+        this._eventTypeNames = {};
+        for (const [name, value] of Object.entries(Clutter.EventType))
+            this._eventTypeNames[value] = name;
+
+        this._probeLastMotion = 0;
+        this._probeHandlerId = global.stage.connect(
+            'captured-event',
+            (actor, event) => {
+                try {
+                    const t = event.type();
+                    const now = Date.now();
+                    const label = this._eventTypeNames[t] || `UNKNOWN(${t})`;
+
+                    // Throttle only MOTION spam; show everything else
+                    if (t === Clutter.EventType.MOTION) {
+                        if (now - this._probeLastMotion < 500)
+                            return;
+                    }
+                    this._probeLastMotion = now;
+
+                    const [px, py] = event.get_coords();
+                    console.error(`[osk-fix][tap] ${label} (${t}) @ ${Math.round(px)},${Math.round(py)}`);
+                } catch (e) {}
+            }
+        );
+        // --- end TEMPORARY ---
+
+
         /*
          * Track the last input device used. GNOME delivers this signal on
          * every device switch - including clicks inside Wayland clients,
@@ -498,6 +527,12 @@ export default class OskFixExtension extends Extension {
     }
 
     disable() {
+        if (this._probeHandlerId) {
+            try {
+                global.stage.disconnect(this._probeHandlerId);
+            } catch (e) {}
+            this._probeHandlerId = 0;
+        }
         // TEMPORARY: remove observation listeners first
         if (this._debugSignalIds) {
             for (const [obj, id] of this._debugSignalIds) {
