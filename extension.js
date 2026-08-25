@@ -202,9 +202,6 @@ export default class OskFixExtension extends Extension {
             global.stage.disconnect(this._capturedEventHandlerId);
             this._capturedEventHandlerId = 0;
         }
-        if (this._buttonPressHandlerId) {
-            global.stage.disconnect(this._buttonPressHandlerId);
-            }
 
         if (this._visibilitySignalId && Main.keyboard) {
             Main.keyboard.disconnect(this._visibilitySignalId);
