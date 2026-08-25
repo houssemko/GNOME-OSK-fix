@@ -24,10 +24,6 @@ export default class OskFixExtension extends Extension {
         this._userHidden = false;
         this._hideButtonPressed = false;
         this._lastPointerPressTime = 0;
-        this._lastClickX = null;
-        this._lastClickY = null;
-        this._cursorRect = null;
-        this._cursorSignalId = 0;
         this._lastDeviceWasPointer = true;
         this._prevVisible = false;
         this._prevInputFocus = null;
@@ -77,25 +73,6 @@ export default class OskFixExtension extends Extension {
             this._pollId,
             '[osk-fix] poll'
         );
-
-        // Track the focused editable's caret rectangle (stage coords).
-        // Clicking within it identifies a text-field interaction even for
-        // opaque Wayland/XWayland surfaces.
-        if (Main.inputMethod?.connect) {
-            this._cursorSignalId = Main.inputMethod.connect(
-                'cursor-location-changed',
-                (im, rect) => {
-                    try {
-                        this._cursorRect = {
-                            x: rect.origin.x,
-                            y: rect.origin.y,
-                            w: rect.size.width,
-                            h: rect.size.height,
-                        };
-                    } catch (e) {}
-                }
-            );
-        }
 
         /*
          * Track the last input device used. GNOME delivers this signal on
@@ -241,8 +218,6 @@ export default class OskFixExtension extends Extension {
             }
 
             this._lastPointerPressTime = Date.now();
-            this._lastClickX = x;
-            this._lastClickY = y;
             this._userHidden = false;
             this._hideButtonPressed = false;
         } catch (e) {
@@ -391,10 +366,6 @@ export default class OskFixExtension extends Extension {
 
         if (visible && !this._prevVisible)
             this._lastPointerPressTime = 0;
-        this._lastClickX = null;
-        this._lastClickY = null;
-        this._cursorRect = null;
-        this._cursorSignalId = 0;
         this._lastDeviceWasPointer = true;
 
         this._prevVisible = visible;
@@ -418,34 +389,24 @@ export default class OskFixExtension extends Extension {
             const timeSinceInteraction = this._lastPointerPressTime > 0
                 ? Date.now() - this._lastPointerPressTime : Infinity;
             const recentClick = timeSinceInteraction < 600;
-            const lastDeviceWasPointer = this._lastDeviceWasPointer;
+            // Wayland clients like Vivaldi can take 1.5-3s to commit focus
+            // after the click - use a generous window for new fields.
+            const wasUserInitiated = timeSinceInteraction < 4000;
 
             /*
-             * Precise click targeting: the click must land within/near the
-             * focused editable's caret rectangle (reported by the input
-             * method in stage coordinates). This distinguishes text-field
-             * clicks from tab-strip/toolbar clicks inside opaque windows.
+             * Two reopen triggers, both requiring the last input device to
+             * be the mouse (keyboard-driven focus never opens):
+             * 1) New editable committed focus shortly after a click
+             * 2) Same editable re-clicked within 600ms
              */
-            let clickOnField = false;
-
-            if (this._cursorRect) {
-                const r = this._cursorRect;
-                const padX = 24;
-                const padY = 16;
-                clickOnField =
-                    this._lastClickX !== null &&
-                    this._lastClickX >= r.x - padX &&
-                    this._lastClickX <= r.x + r.w + padX &&
-                    this._lastClickY >= r.y - padY &&
-                    this._lastClickY <= r.y + r.h + padY;
-            }
+            const sameFieldReClick = !isNewFocus && recentClick;
+            const newFieldWithIntent = isNewFocus && wasUserInitiated;
 
             if (
                 !visible &&
                 !requested &&
-                recentClick &&
                 lastDeviceWasPointer &&
-                (isNewFocus || clickOnField) &&
+                (sameFieldReClick || newFieldWithIntent) &&
                 !this._userHidden &&
                 !this._hideButtonPressed &&
                 this._a11yOskEnabled()
@@ -474,11 +435,6 @@ export default class OskFixExtension extends Extension {
         if (this._pollId) {
             GLib.source_remove(this._pollId);
             this._pollId = 0;
-        }
-
-        if (this._cursorSignalId && Main.inputMethod) {
-            Main.inputMethod.disconnect(this._cursorSignalId);
-            this._cursorSignalId = 0;
         }
 
         if (this._capturedEventHandlerId) {
