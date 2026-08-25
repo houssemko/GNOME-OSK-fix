@@ -1,448 +1,188 @@
 import Clutter from 'gi://Clutter';
+import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import { Keyboard } from 'resource:///org/gnome/shell/ui/keyboard.js';
-import {
-    Extension,
-    InjectionManager,
-} from 'resource:///org/gnome/shell/extensions/extension.js';
+import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 
 const POINTER_PRESS_TYPES = new Set([
     Clutter.EventType.BUTTON_PRESS,
-    // Mutter delivers some client-window presses as synthesized touch
-    // events (observed: Vivaldi text fields arrive as TOUCH_BEGIN).
-    Clutter.EventType.TOUCH_BEGIN,
 ]);
 const DEBUG = true; // TEMPORARY
-/*
- * DEBUG log legend:
- *   device -> pointer=true/false        Input device switched; true means
- *                                       mouse/pointer is now the active device.
- *   outside press - flags lifted        Click detected outside the OSK; hidden
- *                                       state cleared, click timestamp armed.
- *   tick: newF=… ptr=… uH=… hbp=… a11y=… req=…
- *                                       Poll decision state: new focus object,
- *                                       last-device-was-pointer, user-hidden
- *                                       flag, hide-button flag, accessibility
- *                                       toggle, native requested flag.
- *   open blocked: uH=… hbp=… a11y=…     An open() call reached a wrapper but
- *                                       was suppressed - shows which flag.
- *   open() passed gate                  A wrapper allowed open() through to GNOME.
- *   OPEN called                         The poll decided to show the OSK.
- */
+
 export default class OskFixExtension extends Extension {
     enable() {
         this._pollId = 0;
-        this._visibilitySignalId = 0;
-        this._capturedEventHandlerId = 0;
-        this._buttonPressHandlerId = 0;
-
+        this._oldMaybeHandleEvent = null;
+        this._maybeHandleEventWrapper = null;
         this._originalLastDeviceIsTouchscreen = null;
-        this._lastDeviceIsTouchscreenOverride = null;
-
         this._userHidden = false;
         this._hideButtonPressed = false;
-        this._weClosedIt = false;
+        this._visibilitySignalId = 0;
+
         this._lastPointerPressTime = 0;
-        this._lastDeviceWasPointer = true;
         this._prevVisible = false;
         this._prevInputFocus = null;
+        this._capturedEventHandlerId = 0;
+        this._buttonPressHandlerId = 0;
+        this._didOverrideOsk = false;
+        this._originalOpen = null;
+        this._openWrapper = null;
+        this._originalWidgetOpen = null;
+        this._widgetOpenWrapper = null;
 
-        this._injectionManager = new InjectionManager();
+        this._a11y = new Gio.Settings({ schema_id: 'org.gnome.desktop.a11y.applications' });
+        this._originalOskEnabled = this._a11y.get_boolean('screen-keyboard-enabled');
 
-        const keyboard = Main.keyboard;
+        if (!this._originalOskEnabled) {
+            this._a11y.set_boolean('screen-keyboard-enabled', true);
+            this._didOverrideOsk = true;
+        }
 
-        if (keyboard) {
-            this._installKeyboardOverrides(keyboard);
+        if (Main.keyboard) {
+            this._originalLastDeviceIsTouchscreen = Main.keyboard._lastDeviceIsTouchscreen;
+            Main.keyboard._lastDeviceIsTouchscreen = () => true;
 
-            this._visibilitySignalId = keyboard.connect(
-                'visibility-changed',
-                () => {
-                    if (!keyboard.visible && this._hideButtonPressed) {
-                        this._userHidden = true;
-                        this._hideButtonPressed = false;
-                    }
+            this._visibilitySignalId = Main.keyboard.connect('visibility-changed', () => {
+                if (!Main.keyboard.visible && this._hideButtonPressed) {
+                    this._userHidden = true;
+                    this._hideButtonPressed = false;
                 }
-            );
+            });
+
+            if (typeof Main.keyboard.maybeHandleEvent === 'function') {
+                this._oldMaybeHandleEvent = Main.keyboard.maybeHandleEvent;
+                this._maybeHandleEventWrapper = (event) => this._maybeHandleEvent(event);
+                Main.keyboard.maybeHandleEvent = this._maybeHandleEventWrapper;
+            }
+
+            // Gate ALL open() paths. GNOME's internal reopen calls ignore
+            // our hidden state entirely - without this, the OSK reopens
+            // instantly after hide.
+            this._originalOpen = Main.keyboard.open;
+            const ext = this;
+            this._openWrapper = function (...args) {
+                if (ext._userHidden || ext._hideButtonPressed) return;
+                return ext._originalOpen.apply(this, args);
+            };
+            Main.keyboard.open = this._openWrapper;
+
+            // The Keyboard WIDGET also has its own open(), used by all of
+            // GNOME's internal reopen paths (_onKeyFocusChanged idle show,
+            // _onKeyboardStateChanged panel-state ON). Those bypass the
+            // manager entirely. Prototype patch survives widget recreation.
+            this._originalWidgetOpen = Keyboard.prototype.open;
+            this._widgetOpenWrapper = function (...args) {
+                if (ext._userHidden || ext._hideButtonPressed) return;
+                return ext._originalWidgetOpen.apply(this, args);
+            };
+            Keyboard.prototype.open = this._widgetOpenWrapper;
         } else {
-            console.error(
-                '[osk-fix] Main.keyboard not available at enable'
-            );
+            console.error('[osk-fix] Main.keyboard not available at enable');
         }
 
         this._capturedEventHandlerId = global.stage.connect(
             'captured-event',
             (actor, event) => this._onCapturedEvent(actor, event)
         );
-
         this._buttonPressHandlerId = global.stage.connect(
             'button-press-event',
             (actor, event) => this._onCapturedEvent(actor, event)
         );
 
         this._pollId = GLib.timeout_add(
-            GLib.PRIORITY_DEFAULT,
-            300,
-            () => {
+            GLib.PRIORITY_DEFAULT, 300, () => {
                 this._safePoll();
                 return GLib.SOURCE_CONTINUE;
             }
         );
-
-        GLib.Source.set_name_by_id(
-            this._pollId,
-            '[osk-fix] poll'
-        );
-
-        // --- TEMPORARY full event tap: identify Vivaldi's click event ---
-        this._eventTypeNames = {};
-        for (const [name, value] of Object.entries(Clutter.EventType))
-            this._eventTypeNames[value] = name;
-
-        this._probeLastMotion = 0;
-        this._probeHandlerId = global.stage.connect(
-            'captured-event',
-            (actor, event) => {
-                try {
-                    const t = event.type();
-                    const now = Date.now();
-                    const label = this._eventTypeNames[t] || `UNKNOWN(${t})`;
-
-                    // Throttle only MOTION spam; show everything else
-                    if (t === Clutter.EventType.MOTION) {
-                        if (now - this._probeLastMotion < 500)
-                            return;
-                    }
-                    this._probeLastMotion = now;
-
-                    const [px, py] = event.get_coords();
-                    console.error(`[osk-fix][tap] ${label} (${t}) @ ${Math.round(px)},${Math.round(py)}`);
-                } catch (e) {}
-            }
-        );
-        // --- end TEMPORARY ---
-
-
-        /*
-         * Track the last input device used. GNOME delivers this signal on
-         * every device switch - including clicks inside Wayland clients,
-         * whose pointer events never reach stage handlers. A pointer/mouse
-         * as the last device therefore means "the user is mousing", which
-         * is our observable proxy for text-field clicks in those apps.
-         */
-        if (global.backend?.connect) {
-            this._lastDeviceChangedId = global.backend.connect(
-                'last-device-changed',
-                (backend, device) => {
-                    try {
-                        this._lastDeviceWasPointer =
-                            device.get_device_type() !==
-                            Clutter.InputDeviceType.KEYBOARD_DEVICE;
-                        if (DEBUG)
-                            console.error(`[osk-fix] device -> pointer=${this._lastDeviceWasPointer}`);
-                    } catch (e) {}
-                }
-            );
-        }
-    }
-
-    _installKeyboardOverrides(keyboard) {
-        if (!this._injectionManager)
-            return;
-
-        if (typeof keyboard._lastDeviceIsTouchscreen === 'function') {
-            this._originalLastDeviceIsTouchscreen =
-                keyboard._lastDeviceIsTouchscreen;
-
-            this._lastDeviceIsTouchscreenOverride = () => true;
-
-            keyboard._lastDeviceIsTouchscreen =
-                this._lastDeviceIsTouchscreenOverride;
-        }
-
-        const keyboardPrototype = Object.getPrototypeOf(keyboard);
-        const keyboardTarget =
-            keyboardPrototype &&
-            typeof keyboardPrototype.maybeHandleEvent === 'function'
-                ? keyboardPrototype
-                : keyboard;
-
-        if (typeof keyboardTarget.maybeHandleEvent === 'function') {
-            this._injectionManager.overrideMethod(
-                keyboardTarget,
-                'maybeHandleEvent',
-                originalMethod => {
-                    return function (event) {
-                        return this._maybeHandleEvent(
-                            event,
-                            originalMethod
-                        );
-                    }.bind(this);
-                }
-            );
-        }
-
-        const openTarget =
-            keyboardPrototype &&
-            typeof keyboardPrototype.open === 'function'
-                ? keyboardPrototype
-                : keyboard;
-
-        if (typeof openTarget.open === 'function') {
-            const extension = this;
-
-            this._injectionManager.overrideMethod(
-                openTarget,
-                'open',
-                originalMethod => {
-                    return function (...args) {
-                        if (
-                            extension._userHidden ||
-                            extension._hideButtonPressed ||
-                            !extension._a11yOskEnabled()
-                        ) {
-                            console.error(
-                                `[osk-fix] open blocked: uH=${extension._userHidden} ` +
-                                `hbp=${extension._hideButtonPressed} ` +
-                                `a11y=${extension._a11yOskEnabled()}`
-                            );
-                            return undefined;
-                        }
-
-                        console.error('[osk-fix] open() passed gate');
-                        return originalMethod.call(this, ...args);
-                    };
-                }
-            );
-        }
-
-        if (
-            Keyboard?.prototype &&
-            typeof Keyboard.prototype.open === 'function'
-        ) {
-            const extension = this;
-
-            this._injectionManager.overrideMethod(
-                Keyboard.prototype,
-                'open',
-                originalMethod => {
-                    return function (...args) {
-                        if (
-                            extension._userHidden ||
-                            extension._hideButtonPressed ||
-                            !extension._a11yOskEnabled()
-                        ) {
-                            console.error(
-                                `[osk-fix] open blocked: uH=${extension._userHidden} ` +
-                                `hbp=${extension._hideButtonPressed} ` +
-                                `a11y=${extension._a11yOskEnabled()}`
-                            );
-                            return undefined;
-                        }
-
-                        console.error('[osk-fix] open() passed gate');
-                        return originalMethod.call(this, ...args);
-                    };
-                }
-            );
-        }
-
-        /*
-         * Gate the widget close as well: GNOME's _onKeyFocusChanged closes
-         * the OSK whenever stage key-focus is not a Clutter.Text - always
-         * true while typing into Wayland/XWayland clients. Suppress that
-         * churn-close unless the user dismissed it (flags) or our poll
-         * closed it due to real focus loss.
-         */
-        if (
-            Keyboard.prototype &&
-            typeof Keyboard.prototype.close === 'function'
-        ) {
-            const extension = this;
-
-            this._injectionManager.overrideMethod(
-                Keyboard.prototype,
-                'close',
-                originalMethod => {
-                    return function (...args) {
-                        const userDismissed =
-                            extension._userHidden ||
-                            extension._hideButtonPressed;
-                        const ours = extension._weClosedIt;
-
-                        if (userDismissed || ours)
-                            return originalMethod.apply(this, args);
-
-                        /*
-                         * Churn absorption: client text-input flapping sends
-                         * close bursts within ~500ms of user activity. Any
-                         * close attempted within 1.5s of real input is churn
-                         * and gets absorbed - our poll re-evaluates and
-                         * reopens/closes correctly afterwards.
-                         */
-                        const stale =
-                            Date.now() - extension._lastPointerPressTime > 1500;
-
-                        if (DEBUG)
-                            console.error(`[osk-fix] suppressed churn close (stale=${stale})`);
-
-                        if (!stale)
-                            return undefined;
-
-                        return originalMethod.apply(this, args);
-                    };
-                }
-            );
-        }
+        GLib.Source.set_name_by_id(this._pollId, '[osk-fix] poll');
     }
 
     _onCapturedEvent(actor, event) {
         try {
-            if (!POINTER_PRESS_TYPES.has(event.type()))
-                return;
+            if (!POINTER_PRESS_TYPES.has(event.type())) return;
 
+            // Actor-hierarchy checks fail on GNOME 50.4 (the pressed key is
+            // not reported as a descendant of Main.keyboard._keyboard), so
+            // decide "is this press on the OSK?" using stage coordinates.
             const [x, y] = event.get_coords();
-            console.error(`[osk-fix] press (${event.type()}) @ ${Math.round(x)},${Math.round(y)}`);
             const kbd = Main.keyboard?._keyboard;
-
             let pressOnOsk = false;
-
-            /*
-             * get_transformed_position()/size() return stale values on
-             * GNOME 50.4, so anchor the OSK rectangle to monitor geometry:
-             * the OSK always docks to the bottom edge, full width. Only
-             * the height comes from the widget.
-             */
             if (kbd && kbd.visible) {
-                const monitor =
-                    Main.layoutManager.keyboardMonitor ||
-                    Main.layoutManager.primaryMonitor;
-
-                if (monitor) {
-                    const h = kbd.get_transformed_size()[1] || kbd.height;
-                    const topY = monitor.y + monitor.height - h;
-
-                    pressOnOsk =
-                        x >= monitor.x &&
-                        x <= monitor.x + monitor.width &&
-                        y >= topY;
-                }
+                const [sx, sy] = kbd.get_transformed_position();
+                const [w, h] = kbd.get_transformed_size();
+                pressOnOsk = x >= sx && x <= sx + w && y >= sy && y <= sy + h;
             }
 
             if (pressOnOsk) {
                 const isHide = this._isHideButton(actor);
-
+                if (DEBUG) {
+                    let chain = [];
+                    let cur = actor;
+                    while (cur && chain.length < 6) {
+                        const cls = typeof cur.style_class === 'string' ? cur.style_class : '';
+                        chain.push(`${cur.constructor?.name || '?'}${cls ? '[' + cls + ']' : ''}`);
+                        cur = cur.get_parent ? cur.get_parent() : null;
+                    }
+                    console.error(`[osk-fix] OSK press hideBtn=${isHide} chain=${chain.join(' > ')}`);
+                }
                 if (isHide) {
                     this._hideButtonPressed = true;
                     this._userHidden = true;
                 }
-
-                return;
+                return; // OSK clicks never count as text-field taps
             }
 
+            // Press outside the OSK: record click time and lift hidden state
             this._lastPointerPressTime = Date.now();
             this._userHidden = false;
             this._hideButtonPressed = false;
         } catch (e) {
-            console.error(
-                '[osk-fix] Error in captured event handler:',
-                e
-            );
+            console.error('[osk-fix] Error in captured event handler:', e);
         }
     }
 
     _isHideButton(actor) {
         let cur = actor;
-
         while (cur) {
-            const styleClass =
-                cur.style_class ||
-                (
-                    typeof cur.get_style_class_name === 'function'
-                        ? cur.get_style_class_name()
-                        : ''
-                );
-
-            if (
-                typeof styleClass === 'string' &&
-                (
-                    styleClass.includes('hide-key') ||
-                    styleClass.includes('hide')
-                )
-            ) {
+            const styleClass = cur.style_class || (typeof cur.get_style_class_name === 'function' ? cur.get_style_class_name() : '');
+            if (typeof styleClass === 'string' && (styleClass.includes('hide-key') || styleClass.includes('hide'))) {
                 return true;
             }
 
-            const iconName =
-                cur.icon_name ||
-                cur.child?.icon_name;
-
-            if (
-                [
-                    'osk-hide-symbolic',
-                    'go-down-symbolic',
-                    'keyboard-hide-symbolic',
-                    'input-keyboard-symbolic',
-                ].includes(iconName)
-            ) {
+            const iconName = cur.icon_name || cur.child?.icon_name;
+            if (['osk-hide-symbolic', 'go-down-symbolic', 'keyboard-hide-symbolic', 'input-keyboard-symbolic'].includes(iconName)) {
                 return true;
             }
 
-            if (
-                cur._key?.name === 'hide' ||
-                cur._key?.action === 'hide'
-            ) {
+            if (cur._key?.name === 'hide' || cur._key?.action === 'hide') {
                 return true;
             }
 
-            cur =
-                typeof cur.get_parent === 'function'
-                    ? cur.get_parent()
-                    : null;
+            cur = cur.get_parent ? cur.get_parent() : null;
         }
-
         return false;
     }
 
-    _a11yOskEnabled() {
-        return !!(Main.keyboard && Main.keyboard._keyboard);
-    }
-
-    _maybeHandleEvent(event, originalMethod) {
+    _maybeHandleEvent(event) {
         try {
+            const handled = this._oldMaybeHandleEvent ? this._oldMaybeHandleEvent.call(Main.keyboard, event) : false;
+            if (handled) return true;
 
-            const handled = originalMethod
-                ? originalMethod.call(Main.keyboard, event)
-                : false;
-
-            if (handled)
-                return true;
-
-            if (!Main.keyboard?._keyboard)
-                return false;
+            if (!Main.keyboard || !Main.keyboard._keyboard) return false;
 
             const actor = global.stage.get_event_actor(event);
+            if (!actor || !this._actorIsText(actor)) return false;
 
-            if (!actor || !this._actorIsText(actor))
-                return false;
+            if (event.type() !== Clutter.EventType.BUTTON_PRESS) return false;
 
-            if (event.type() !== Clutter.EventType.BUTTON_PRESS)
-                return false;
-
-            if (
-                !Main.keyboard.visible &&
-                !this._userHidden &&
-                !this._hideButtonPressed &&
-                this._a11yOskEnabled()
-            ) {
-                Main.keyboard?._keyboard?.open(true);
+            if (!Main.keyboard.visible && !this._userHidden) {
+                Main.keyboard.open(Main.layoutManager.focusIndex);
             }
         } catch (e) {
-            console.error(
-                '[osk-fix] Error in _maybeHandleEvent:',
-                e
-            );
+            console.error('[osk-fix] Error in _maybeHandleEvent:', e);
         }
 
         return false;
@@ -452,198 +192,124 @@ export default class OskFixExtension extends Extension {
         try {
             this._poll();
         } catch (e) {
-            console.error(
-                '[osk-fix] Exception during poll cycle:',
-                e
-            );
+            console.error('[osk-fix] Exception during poll cycle:', e);
         }
     }
 
     _poll() {
-        const keyboard = Main.keyboard;
-
-        if (!keyboard)
-            return;
+        if (!Main.keyboard) return;
 
         const focus = Main.inputMethod?.currentFocus;
-
         let hasFocus = false;
-
         if (focus) {
             try {
                 hasFocus = !!focus.is_focused();
             } catch (e) {
-                console.error(
-                    '[osk-fix] Error checking focus state:',
-                    e
-                );
-
+                console.error('[osk-fix] Error checking focus state:', e);
                 hasFocus = !!focus;
             }
         }
 
-        const kbd = keyboard._keyboard;
+        const kbd = Main.keyboard._keyboard;
         const actorExists = !!kbd;
-        const visible = keyboard.visible;
-
-        if (visible && !this._prevVisible)
+        const visible = Main.keyboard.visible;
+        if (visible && !this._prevVisible) {
             this._lastPointerPressTime = 0;
-
+        }
         this._prevVisible = visible;
+        const requested = !!(kbd && kbd._keyboardRequested);
 
-        const requested =
-            !!(kbd && kbd._keyboardRequested);
-
-        const focusChanged =
-            this._prevInputFocus !== null &&
-            this._prevInputFocus !== focus;
-
-        if (focusChanged)
+        const focusChanged = this._prevInputFocus !== null && this._prevInputFocus !== focus;
+        if (focusChanged) {
             this._prevInputFocus = null;
+        }
 
         if (hasFocus && actorExists) {
             const isNewFocus = !this._prevInputFocus;
-
-            if (isNewFocus)
+            if (isNewFocus) {
                 this._prevInputFocus = focus;
+            }
 
-            if (DEBUG)
-                console.error(`[osk-fix] tick: hf=${hasFocus} newF=${isNewFocus} vis=${visible} ` +
-                    `ptr=${this._lastDeviceWasPointer} uH=${this._userHidden} hbp=${this._hideButtonPressed} ` +
-                    `a11y=${this._a11yOskEnabled()} req=${requested} ` +
-                    `wVis=${kbd._keyboardVisible} wReq=${kbd._keyboardRequested} ` +
-                    `box=${Main.layoutManager.keyboardBox.visible} mapped=${kbd.mapped}`);
+            const recentClick = this._lastPointerPressTime > 0 && (Date.now() - this._lastPointerPressTime) < 500;
 
-            const timeSinceInteraction = this._lastPointerPressTime > 0
-                ? Date.now() - this._lastPointerPressTime : Infinity;
-            const recentClick = timeSinceInteraction < 600;
-            // Wayland clients like Vivaldi can take 1.5-3s to commit focus
-            // after the click - use a generous window for new fields.
-            const wasUserInitiated = timeSinceInteraction < 4000;
+            if (DEBUG && recentClick && !visible) {
+                console.error(`[osk-fix] poll: recentClick w/ field focused, hidden=${this._userHidden || this._hideButtonPressed} req=${requested}`);
+            }
 
-            /*
-             * Two reopen triggers, both requiring the last input device to
-             * be the mouse (keyboard-driven focus never opens):
-             * 1) New editable committed focus shortly after a click
-             * 2) Same editable re-clicked within 600ms
-             */
-            const sameFieldReClick = !isNewFocus && recentClick;
-            const newFieldWithIntent = isNewFocus && wasUserInitiated;
-
-            /*
-             * Stale-request recovery: GNOME can latch _keyboardRequested
-             * without ever completing the show animation (half-open zombie,
-             * seen on GNOME 50.4). Clear it so subsequent opens work.
-             */
-            if (requested && !visible)
-                kbd._keyboardRequested = false;
-
-            if (
-                !visible &&
-                (sameFieldReClick || newFieldWithIntent) &&
-                !this._userHidden &&
-                !this._hideButtonPressed &&
-                this._a11yOskEnabled()
-            ) {
+            if (!visible && !requested && (isNewFocus || recentClick) && !this._userHidden && !this._hideButtonPressed) {
                 if (DEBUG) console.error('[osk-fix] OPEN called');
-                keyboard.open(
-                    Main.layoutManager.focusIndex
-                );
+                Main.keyboard.open(Main.layoutManager.focusIndex);
             }
         } else if (!hasFocus && visible) {
-            this._weClosedIt = true;
-            keyboard.close();
+            Main.keyboard.close();
             this._prevInputFocus = focus;
         }
     }
 
     disable() {
-        if (this._probeHandlerId) {
-            try {
-                global.stage.disconnect(this._probeHandlerId);
-            } catch (e) {}
-            this._probeHandlerId = 0;
-        }
-        // TEMPORARY: remove observation listeners first
-        if (this._debugSignalIds) {
-            for (const [obj, id] of this._debugSignalIds) {
-                try {
-                    obj.disconnect(id);
-                } catch (e) {}
-            }
-            this._debugSignalIds = [];
-        }
-
         if (this._pollId) {
             GLib.source_remove(this._pollId);
             this._pollId = 0;
         }
 
         if (this._capturedEventHandlerId) {
-            global.stage.disconnect(
-                this._capturedEventHandlerId
-            );
-
+            global.stage.disconnect(this._capturedEventHandlerId);
             this._capturedEventHandlerId = 0;
         }
-
         if (this._buttonPressHandlerId) {
-            global.stage.disconnect(
-                this._buttonPressHandlerId
-            );
-
+            global.stage.disconnect(this._buttonPressHandlerId);
             this._buttonPressHandlerId = 0;
         }
 
-
-        if (
-            this._visibilitySignalId &&
-            Main.keyboard
-        ) {
-            Main.keyboard.disconnect(
-                this._visibilitySignalId
-            );
-
+        if (this._visibilitySignalId && Main.keyboard) {
+            Main.keyboard.disconnect(this._visibilitySignalId);
             this._visibilitySignalId = 0;
         }
 
+        if (this._oldMaybeHandleEvent && Main.keyboard &&
+            Main.keyboard.maybeHandleEvent === this._maybeHandleEventWrapper) {
+            Main.keyboard.maybeHandleEvent = this._oldMaybeHandleEvent;
+        }
+        this._oldMaybeHandleEvent = null;
+        this._maybeHandleEventWrapper = null;
 
-        if (this._injectionManager) {
-            this._injectionManager.clear();
-            this._injectionManager = null;
+        if (this._originalOpen && Main.keyboard &&
+            Main.keyboard.open === this._openWrapper) {
+            Main.keyboard.open = this._originalOpen;
+        }
+        this._originalOpen = null;
+        this._openWrapper = null;
+
+        if (this._originalWidgetOpen &&
+            Keyboard.prototype.open === this._widgetOpenWrapper) {
+            Keyboard.prototype.open = this._originalWidgetOpen;
+        }
+        this._originalWidgetOpen = null;
+        this._widgetOpenWrapper = null;
+
+        if (Main.keyboard && this._originalLastDeviceIsTouchscreen !== undefined) {
+            Main.keyboard._lastDeviceIsTouchscreen = this._originalLastDeviceIsTouchscreen;
+            this._originalLastDeviceIsTouchscreen = undefined;
         }
 
-        if (
-            Main.keyboard &&
-            this._lastDeviceIsTouchscreenOverride &&
-            Main.keyboard._lastDeviceIsTouchscreen ===
-                this._lastDeviceIsTouchscreenOverride
-        ) {
-            Main.keyboard._lastDeviceIsTouchscreen =
-                this._originalLastDeviceIsTouchscreen;
+        if (this._didOverrideOsk && this._a11y) {
+            this._a11y.set_boolean('screen-keyboard-enabled', this._originalOskEnabled);
+            this._didOverrideOsk = false;
         }
 
-        this._lastDeviceIsTouchscreenOverride = null;
-        this._originalLastDeviceIsTouchscreen = null;
+        this._a11y = null;
 
-        if (Main.keyboard?.visible)
+        if (Main.keyboard && Main.keyboard.visible) {
             Main.keyboard.close();
+        }
     }
-
 
     _actorIsText(actor) {
         let cur = actor;
-
         while (cur) {
-            if (cur instanceof Clutter.Text)
-                return true;
-
-            cur =
-                typeof cur.get_parent === 'function'
-                    ? cur.get_parent()
-                    : null;
+            if (cur instanceof Clutter.Text) return true;
+            cur = cur.get_parent ? cur.get_parent() : null;
         }
-
         return false;
     }
 }
