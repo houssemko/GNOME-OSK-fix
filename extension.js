@@ -139,6 +139,31 @@ export default class OskFixExtension extends Extension {
             }
 
             // Press outside the OSK: record click time and lift hidden state
+            //
+            // Coordinate validation: synthetic events (e.g. phantom SCROLL
+            // with @0,0 coords emitted by some clients without user input)
+            // must NOT arm the click trigger. Only presses carrying real,
+            // on-screen coordinates count as user interaction.
+            const monitor =
+                Main.layoutManager.keyboardMonitor ||
+                Main.layoutManager.primaryMonitor;
+
+            const validCoords =
+                monitor &&
+                x >= monitor.x &&
+                x <= monitor.x + monitor.width &&
+                y >= monitor.y &&
+                y <= monitor.y + monitor.height;
+
+            if (DEBUG)
+                console.error(
+                    `[osk-fix] arm check: type=${event.type()} @ ${Math.round(x)},${Math.round(y)} ` +
+                    `valid=${validCoords}`
+                );
+
+            if (!validCoords)
+                return; // phantom/synthetic event - ignore entirely
+
             this._lastPointerPressTime = Date.now();
             this._userHidden = false;
             this._hideButtonPressed = false;
