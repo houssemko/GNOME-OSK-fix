@@ -11,6 +11,7 @@ import {
 const POINTER_PRESS_TYPES = new Set([
     Clutter.EventType.BUTTON_PRESS,
 ]);
+const DEBUG = true; // TEMPORARY - observation round
 
 export default class OskFixExtension extends Extension {
     enable() {
@@ -73,6 +74,44 @@ export default class OskFixExtension extends Extension {
             this._pollId,
             '[osk-fix] poll'
         );
+
+        // --- TEMPORARY observation instrumentation ---
+        this._debugSignalIds = [];
+
+        // Which input device was used last (mouse vs keyboard etc).
+        if (global.backend?.connect) {
+            this._debugSignalIds.push([
+                global.backend,
+                global.backend.connect('last-device-changed', (backend, device) => {
+                    let type = -1;
+                    let name = '?';
+                    try {
+                        type = device.get_device_type();
+                        name = device.get_device_name();
+                    } catch (e) {}
+                    console.error(`[osk-fix][dbg] last-device-changed type=${type} name="${name}"`);
+                })
+            ]);
+        }
+
+        // IM focus commits (the signal we already rely on via polling).
+        if (Main.inputMethod?.connect) {
+            this._debugSignalIds.push([
+                Main.inputMethod,
+                Main.inputMethod.connect('notify::current-focus', () => {
+                    const f = Main.inputMethod?.currentFocus;
+                    console.error(`[osk-fix][dbg] current-focus changed obj=${!!f}`);
+                })
+            ]);
+
+            this._debugSignalIds.push([
+                Main.inputMethod,
+                Main.inputMethod.connect('cursor-location-changed', () => {
+                    console.error('[osk-fix][dbg] cursor-location-changed');
+                })
+            ]);
+        }
+        // --- end TEMPORARY ---
     }
 
     _installKeyboardOverrides(keyboard) {
@@ -388,6 +427,15 @@ export default class OskFixExtension extends Extension {
     }
 
     disable() {
+        // TEMPORARY: remove observation listeners first
+        if (this._debugSignalIds) {
+            for (const [obj, id] of this._debugSignalIds) {
+                try {
+                    obj.disconnect(id);
+                } catch (e) {}
+            }
+            this._debugSignalIds = [];
+        }
 
         if (this._pollId) {
             GLib.source_remove(this._pollId);
