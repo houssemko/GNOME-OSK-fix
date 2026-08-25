@@ -11,6 +11,8 @@ import {
 const POINTER_PRESS_TYPES = new Set([
     Clutter.EventType.BUTTON_PRESS,
 ]);
+const DEBUG = true; // TEMPORARY - click-delivery probe
+let lastProbeLog = 0;
 export default class OskFixExtension extends Extension {
     enable() {
         this._pollId = 0;
@@ -187,7 +189,17 @@ export default class OskFixExtension extends Extension {
 
     _onCapturedEvent(actor, event) {
         try {
-            if (!POINTER_PRESS_TYPES.has(event.type()))
+            const t = event.type();
+
+            if (DEBUG) {
+                const now = Date.now();
+                if (now - lastProbeLog > 1000) {
+                    lastProbeLog = now;
+                    console.error(`[osk-fix][probe] event type=${t} actor=${actor?.constructor?.name}`);
+                }
+            }
+
+            if (!POINTER_PRESS_TYPES.has(t))
                 return;
 
             const [x, y] = event.get_coords();
