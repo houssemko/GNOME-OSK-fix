@@ -271,19 +271,24 @@ export default class OskFixExtension extends Extension {
                             extension._hideButtonPressed;
                         const ours = extension._weClosedIt;
 
-                        /*
-                         * Gate on existence of an IM focus target - NOT on
-                         * is_focused(): during Wayland IM churn the focus
-                         * object briefly reports unfocused, which let this
-                         * native close slip through mid-typing.
-                         */
-                        const imEngaged =
-                            !!Main.inputMethod?.currentFocus;
+                        if (userDismissed || ours)
+                            return originalMethod.apply(this, args);
 
-                        if (!userDismissed && !ours && imEngaged) {
-                            console.error('[osk-fix] suppressed key-focus churn close');
+                        /*
+                         * Churn absorption: client text-input flapping sends
+                         * close bursts within ~500ms of user activity. Any
+                         * close attempted within 1.5s of real input is churn
+                         * and gets absorbed - our poll re-evaluates and
+                         * reopens/closes correctly afterwards.
+                         */
+                        const stale =
+                            Date.now() - extension._lastPointerPressTime > 1500;
+
+                        if (DEBUG)
+                            console.error(`[osk-fix] suppressed churn close (stale=${stale})`);
+
+                        if (!stale)
                             return undefined;
-                        }
 
                         return originalMethod.apply(this, args);
                     };
