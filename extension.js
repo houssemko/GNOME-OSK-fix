@@ -289,6 +289,7 @@ export default class OskFixExtension extends Extension {
                 return;
 
             const [x, y] = event.get_coords();
+            console.error(`[osk-fix] press (${event.type()}) @ ${Math.round(x)},${Math.round(y)}`);
             const kbd = Main.keyboard?._keyboard;
 
             let pressOnOsk = false;
