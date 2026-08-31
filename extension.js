@@ -38,11 +38,11 @@ export default class OskFixExtension extends Extension {
             return;
         }
 
+        this._settings = this.getSettings();
         this._a11y = new Gio.Settings({ schema_id: 'org.gnome.desktop.a11y.applications' });
-        this._originalOskEnabled = this._a11y.get_boolean('screen-keyboard-enabled');
-        if (!this._originalOskEnabled) {
+        if (!this._a11y.get_boolean('screen-keyboard-enabled')) {
             this._a11y.set_boolean('screen-keyboard-enabled', true);
-            this._didOverrideOsk = true;
+            this._settings.set_boolean('previous-state', true);
         }
 
         this._installKeyboardOverrides(keyboard);
@@ -107,11 +107,12 @@ export default class OskFixExtension extends Extension {
         this._lastDeviceIsTouchscreenOverride = null;
         this._originalLastDeviceIsTouchscreen = null;
 
-        if (this._didOverrideOsk && this._a11y) {
-            this._a11y.set_boolean('screen-keyboard-enabled', this._originalOskEnabled);
-            this._didOverrideOsk = false;
+        if (this._settings?.get_boolean('previous-state')) {
+            this._a11y?.set_boolean('screen-keyboard-enabled', false);
+            this._settings.set_boolean('previous-state', false);
         }
         this._a11y = null;
+        this._settings = null;
 
         if (Main.keyboard?.visible) {
             this._closingProgrammatically = true;

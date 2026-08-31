@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist gettext-domain="osk-fix@houssemko.github.io">
+    <schema id="org.gnome.shell.extensions.osk-fix" path="/org/gnome/shell/extensions/osk-fix/">
+        <key name="previous-state" type="b">
+            <default>false</default>
+            <summary>Previous screen-keyboard-enabled state</summary>
+            <description>
+                Whether to restore the system screen keyboard setting that was
+                active before the extension forced it on.
+            </description>
+        </key>
+    </schema>
+</schemalist>

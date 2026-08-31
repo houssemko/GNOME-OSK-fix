@@ -18,9 +18,12 @@ curl -sSL https://raw.githubusercontent.com/houssemko/osk-fix/master/install.sh 
 ```bash
 git clone https://github.com/houssemko/osk-fix.git
 cd osk-fix
-mkdir -p ~/.local/share/gnome-shell/extensions/osk-fix@houssemko.github.io
+mkdir -p ~/.local/share/gnome-shell/extensions/osk-fix@houssemko.github.io/schemas
 cp extension.js metadata.json README.md LICENSE \
    ~/.local/share/gnome-shell/extensions/osk-fix@houssemko.github.io/
+cp schemas/org.gnome.shell.extensions.osk-fix.gschema.xml \
+   ~/.local/share/gnome-shell/extensions/osk-fix@houssemko.github.io/schemas/
+glib-compile-schemas ~/.local/share/gnome-shell/extensions/osk-fix@houssemko.github.io/schemas/
 gnome-extensions enable osk-fix@houssemko.github.io
 ```
 
