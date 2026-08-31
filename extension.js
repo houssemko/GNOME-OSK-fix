@@ -132,24 +132,6 @@ export default class OskFixExtension extends Extension {
 
         const keyboardPrototype = Object.getPrototypeOf(keyboard);
 
-        const maybeHandleEventTarget =
-            keyboardPrototype && typeof keyboardPrototype.maybeHandleEvent === 'function'
-                ? keyboardPrototype
-                : keyboard;
-
-        if (typeof maybeHandleEventTarget.maybeHandleEvent === 'function') {
-            this._injectionManager.overrideMethod(
-                maybeHandleEventTarget,
-                'maybeHandleEvent',
-                originalMethod => {
-                    const extension = this;
-                    return function (event) {
-                        return extension._maybeHandleEvent(event, originalMethod, this);
-                    };
-                }
-            );
-        }
-
         const openTarget =
             keyboardPrototype && typeof keyboardPrototype.open === 'function'
                 ? keyboardPrototype
@@ -232,31 +214,6 @@ export default class OskFixExtension extends Extension {
         return !!(Main.keyboard && Main.keyboard._keyboard);
     }
 
-    _maybeHandleEvent(event, originalMethod, keyboardSelf) {
-        try {
-            const handled = originalMethod ? originalMethod.call(keyboardSelf, event) : false;
-            if (handled)
-                return true;
-
-            if (!Main.keyboard?._keyboard)
-                return false;
-
-            const actor = global.stage.get_event_actor(event);
-            if (!actor || !this._actorIsText(actor))
-                return false;
-
-            if (event.type() !== Clutter.EventType.BUTTON_PRESS)
-                return false;
-
-            if (!Main.keyboard.visible && !this._userHidden && !this._hideButtonPressed) {
-                Main.keyboard.open(Main.layoutManager.focusIndex);
-            }
-        } catch (e) {
-            logError(e, '[osk-fix] Error in _maybeHandleEvent');
-        }
-        return false;
-    }
-
     _safePoll() {
         try {
             this._poll();
@@ -312,10 +269,5 @@ export default class OskFixExtension extends Extension {
             keyboard.close();
              this._prevInputFocus = focus;
         }
-    }
-
-    _actorIsText(actor) {
-        return this._walkParents(actor, cur =>
-            cur instanceof Clutter.Text || cur.inputMethodHints !== undefined);
     }
 }
