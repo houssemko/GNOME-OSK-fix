@@ -14,7 +14,7 @@ for f in "${FILES[@]}"; do
         cp "$f" "$EXT_DIR/"
     else
         # Fall back to downloading from repo if file not found locally
-        curl -sSL "$REPO/raw/main/$f" -o "$EXT_DIR/$f"
+        curl -sSL "$REPO/raw/master/$f" -o "$EXT_DIR/$f"
     fi
 done
 

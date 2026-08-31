@@ -1,5 +1,4 @@
 import Clutter from 'gi://Clutter';
-import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
@@ -38,7 +37,7 @@ export default class OskFixExtension extends Extension {
             return;
         }
 
-        this._a11y = new Gio.Settings({ schema_id: 'org.gnome.desktop.a11y.applications' });
+        this._a11y = new imports.gi.Gio.Settings({ schema_id: 'org.gnome.desktop.a11y.applications' });
         this._originalOskEnabled = this._a11y.get_boolean('screen-keyboard-enabled');
         if (!this._originalOskEnabled) {
             this._a11y.set_boolean('screen-keyboard-enabled', true);

@@ -10,7 +10,7 @@ A GNOME Shell extension that forces the native on-screen keyboard (OSK) to appea
 ### One-line install
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/houssemko/osk-fix/main/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/houssemko/osk-fix/master/install.sh | bash
 ```
 
 ### Manual
