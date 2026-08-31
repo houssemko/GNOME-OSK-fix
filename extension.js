@@ -78,6 +78,47 @@ export default class OskFixExtension extends Extension {
         GLib.Source.set_name_by_id(this._pollId, '[osk-fix] poll');
     }
 
+    disable() {
+        if (this._pollId) {
+            GLib.source_remove(this._pollId);
+            this._pollId = 0;
+        }
+
+        if (this._capturedEventHandlerId) {
+            global.stage.disconnect(this._capturedEventHandlerId);
+            this._capturedEventHandlerId = 0;
+        }
+
+        if (this._visibilitySignalId && Main.keyboard) {
+            Main.keyboard.disconnect(this._visibilitySignalId);
+            this._visibilitySignalId = 0;
+        }
+
+        if (this._injectionManager) {
+            this._injectionManager.clear();
+            this._injectionManager = null;
+        }
+
+        if (Main.keyboard &&
+            this._lastDeviceIsTouchscreenOverride &&
+            Main.keyboard._lastDeviceIsTouchscreen === this._lastDeviceIsTouchscreenOverride) {
+            Main.keyboard._lastDeviceIsTouchscreen = this._originalLastDeviceIsTouchscreen;
+        }
+        this._lastDeviceIsTouchscreenOverride = null;
+        this._originalLastDeviceIsTouchscreen = null;
+
+        if (this._didOverrideOsk && this._a11y) {
+            this._a11y.set_boolean('screen-keyboard-enabled', this._originalOskEnabled);
+            this._didOverrideOsk = false;
+        }
+        this._a11y = null;
+
+        if (Main.keyboard?.visible) {
+            this._closingProgrammatically = true;
+            Main.keyboard.close();
+        }
+    }
+
     _installKeyboardOverrides(keyboard) {
         if (typeof keyboard._lastDeviceIsTouchscreen === 'function') {
             this._originalLastDeviceIsTouchscreen = keyboard._lastDeviceIsTouchscreen;
@@ -268,48 +309,7 @@ export default class OskFixExtension extends Extension {
         } else if (!hasFocus && visible) {
             this._closingProgrammatically = true;
             keyboard.close();
-            this._prevInputFocus = focus;
-        }
-    }
-
-    disable() {
-        if (this._pollId) {
-            GLib.source_remove(this._pollId);
-            this._pollId = 0;
-        }
-
-        if (this._capturedEventHandlerId) {
-            global.stage.disconnect(this._capturedEventHandlerId);
-            this._capturedEventHandlerId = 0;
-        }
-
-        if (this._visibilitySignalId && Main.keyboard) {
-            Main.keyboard.disconnect(this._visibilitySignalId);
-            this._visibilitySignalId = 0;
-        }
-
-        if (this._injectionManager) {
-            this._injectionManager.clear();
-            this._injectionManager = null;
-        }
-
-        if (Main.keyboard &&
-            this._lastDeviceIsTouchscreenOverride &&
-            Main.keyboard._lastDeviceIsTouchscreen === this._lastDeviceIsTouchscreenOverride) {
-            Main.keyboard._lastDeviceIsTouchscreen = this._originalLastDeviceIsTouchscreen;
-        }
-        this._lastDeviceIsTouchscreenOverride = null;
-        this._originalLastDeviceIsTouchscreen = null;
-
-        if (this._didOverrideOsk && this._a11y) {
-            this._a11y.set_boolean('screen-keyboard-enabled', this._originalOskEnabled);
-            this._didOverrideOsk = false;
-        }
-        this._a11y = null;
-
-        if (Main.keyboard?.visible) {
-            this._closingProgrammatically = true;
-            Main.keyboard.close();
+             this._prevInputFocus = focus;
         }
     }
 
