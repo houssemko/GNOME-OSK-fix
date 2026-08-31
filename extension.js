@@ -3,18 +3,15 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
-
-const logError = global.logError || ((e, msg) => console.error(msg, e));
 import { Keyboard } from 'resource:///org/gnome/shell/ui/keyboard.js';
 import {
     Extension,
     InjectionManager,
 } from 'resource:///org/gnome/shell/extensions/extension.js';
 
-const POINTER_PRESS_TYPES = new Set([
-    Clutter.EventType.BUTTON_PRESS,
-]);
 const RECENT_CLICK_WINDOW_MS = 500;
+
+const logError = (e, msg) => console.error(msg, e);
 
 export default class OskFixExtension extends Extension {
     enable() {
@@ -141,7 +138,7 @@ export default class OskFixExtension extends Extension {
 
     _onCapturedEvent(actor, event) {
         try {
-            if (!POINTER_PRESS_TYPES.has(event.type()))
+            if (event.type() !== Clutter.EventType.BUTTON_PRESS)
                 return;
 
             const [x, y] = event.get_coords();
@@ -170,24 +167,42 @@ export default class OskFixExtension extends Extension {
         }
     }
 
-    _isHideButton(actor) {
+    /**
+     * Walk an actor and its ancestors, returning true when {@link predicate}
+     * matches any of them.
+     * @param {Clutter.Actor} actor
+     * @param {(actor: Clutter.Actor) => boolean} predicate
+     * @returns {boolean}
+     */
+    _walkParents(actor, predicate) {
         let cur = actor;
         while (cur) {
-            const styleClass = cur.style_class ||
-                (typeof cur.get_style_class_name === 'function' ? cur.get_style_class_name() : '');
-            if (typeof styleClass === 'string' &&
-                (styleClass.includes('hide-key') || styleClass.includes('hide'))) {
+            if (predicate(cur))
                 return true;
-            }
             cur = typeof cur.get_parent === 'function' ? cur.get_parent() : null;
         }
         return false;
+    }
+
+    _isHideButton(actor) {
+        return this._walkParents(actor, cur => {
+            const styleClass = cur.style_class ||
+                (typeof cur.get_style_class_name === 'function' ? cur.get_style_class_name() : '');
+            return typeof styleClass === 'string' &&
+                (styleClass.includes('hide-key') || styleClass.includes('hide'));
+        });
     }
 
     _oskAvailable() {
         return !!(Main.keyboard && Main.keyboard._keyboard);
     }
 
+    /**
+     * Hooked into the keyboard's `maybeHandleEvent`. Opens the OSK when a
+     * pointer press lands on a text-capable actor that the shell otherwise
+     * ignores (e.g. Chromium surfaces under Wayland).
+     * @returns {boolean} whether the event was handled
+     */
     _maybeHandleEvent(event, originalMethod, keyboardSelf) {
         try {
             const handled = originalMethod ? originalMethod.call(keyboardSelf, event) : false;
@@ -221,6 +236,11 @@ export default class OskFixExtension extends Extension {
         }
     }
 
+    /**
+     * Poll the input-method focus every 300ms and re-assert the OSK while a
+     * text field is focused. Load-bearing for Chromium on Wayland, whose focus
+     * never surfaces through the shell's event/signal paths.
+     */
     _poll() {
         const keyboard = Main.keyboard;
         if (!keyboard)
@@ -312,14 +332,7 @@ export default class OskFixExtension extends Extension {
     }
 
     _actorIsText(actor) {
-        let cur = actor;
-        while (cur) {
-            if (cur instanceof Clutter.Text)
-                return true;
-            if (cur.inputMethodHints !== undefined)
-                return true;
-            cur = typeof cur.get_parent === 'function' ? cur.get_parent() : null;
-        }
-        return false;
+        return this._walkParents(actor, cur =>
+            cur instanceof Clutter.Text || cur.inputMethodHints !== undefined);
     }
 }
