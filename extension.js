@@ -179,20 +179,6 @@ export default class OskFixExtension extends Extension {
                 (styleClass.includes('hide-key') || styleClass.includes('hide'))) {
                 return true;
             }
-
-            const iconName = cur.icon_name || cur.child?.icon_name;
-            if ([
-                'osk-hide-symbolic',
-                'go-down-symbolic',
-                'keyboard-hide-symbolic',
-                'input-keyboard-symbolic',
-            ].includes(iconName)) {
-                return true;
-            }
-
-            if (cur._key?.name === 'hide' || cur._key?.action === 'hide')
-                return true;
-
             cur = typeof cur.get_parent === 'function' ? cur.get_parent() : null;
         }
         return false;
