@@ -191,23 +191,17 @@ export default class OskFixExtension extends Extension {
         }
     }
 
-    _walkParents(actor, predicate) {
-        let cur = actor;
-        while (cur) {
-            if (predicate(cur))
-                return true;
-            cur = typeof cur.get_parent === 'function' ? cur.get_parent() : null;
-        }
-        return false;
-    }
-
     _isHideButton(actor) {
-        return this._walkParents(actor, cur => {
+        for (let cur = actor;
+             cur;
+             cur = typeof cur.get_parent === 'function' ? cur.get_parent() : null) {
             const styleClass = cur.style_class ||
                 (typeof cur.get_style_class_name === 'function' ? cur.get_style_class_name() : '');
-            return typeof styleClass === 'string' &&
-                (styleClass.includes('hide-key') || styleClass.includes('hide'));
-        });
+            if (typeof styleClass === 'string' &&
+                (styleClass.includes('hide-key') || styleClass.includes('hide')))
+                return true;
+        }
+        return false;
     }
 
     _oskAvailable() {
