@@ -167,13 +167,6 @@ export default class OskFixExtension extends Extension {
         }
     }
 
-    /**
-     * Walk an actor and its ancestors, returning true when {@link predicate}
-     * matches any of them.
-     * @param {Clutter.Actor} actor
-     * @param {(actor: Clutter.Actor) => boolean} predicate
-     * @returns {boolean}
-     */
     _walkParents(actor, predicate) {
         let cur = actor;
         while (cur) {
@@ -197,12 +190,6 @@ export default class OskFixExtension extends Extension {
         return !!(Main.keyboard && Main.keyboard._keyboard);
     }
 
-    /**
-     * Hooked into the keyboard's `maybeHandleEvent`. Opens the OSK when a
-     * pointer press lands on a text-capable actor that the shell otherwise
-     * ignores (e.g. Chromium surfaces under Wayland).
-     * @returns {boolean} whether the event was handled
-     */
     _maybeHandleEvent(event, originalMethod, keyboardSelf) {
         try {
             const handled = originalMethod ? originalMethod.call(keyboardSelf, event) : false;
@@ -236,11 +223,6 @@ export default class OskFixExtension extends Extension {
         }
     }
 
-    /**
-     * Poll the input-method focus every 300ms and re-assert the OSK while a
-     * text field is focused. Load-bearing for Chromium on Wayland, whose focus
-     * never surfaces through the shell's event/signal paths.
-     */
     _poll() {
         const keyboard = Main.keyboard;
         if (!keyboard)
