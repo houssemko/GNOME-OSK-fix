@@ -26,7 +26,6 @@ export default class OskFixExtension extends Extension {
         this._hideButtonPressed = false;
         this._lastPointerPressTime = 0;
         this._prevVisible = false;
-        this._prevInputFocus = null;
         this._closingProgrammatically = false;
 
         this._injectionManager = new InjectionManager();
@@ -243,26 +242,17 @@ export default class OskFixExtension extends Extension {
 
         const requested = !!(kbd && kbd._keyboardRequested);
 
-        const focusChanged = this._prevInputFocus !== null && this._prevInputFocus !== focus;
-        if (focusChanged)
-            this._prevInputFocus = null;
-
         if (hasFocus && actorExists) {
-            const isNewFocus = !this._prevInputFocus;
-            if (isNewFocus)
-                this._prevInputFocus = focus;
-
             const recentClick = this._lastPointerPressTime > 0 &&
                 Date.now() - this._lastPointerPressTime < RECENT_CLICK_WINDOW_MS;
 
-            if (!visible && !requested && (isNewFocus || recentClick) &&
+            if (!visible && !requested && recentClick &&
                 !this._userHidden && !this._hideButtonPressed) {
                 keyboard.open(Main.layoutManager.focusIndex);
             }
         } else if (!hasFocus && visible) {
             this._closingProgrammatically = true;
             keyboard.close();
-             this._prevInputFocus = focus;
         }
     }
 }
