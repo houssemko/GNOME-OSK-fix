@@ -1,0 +1,10 @@
+{
+    "uuid": "osk-fix@houssemko.github.io",
+    "name": "OSK Fix",
+    "description": "Forces the native on-screen keyboard to appear in applications that don't trigger it.\n\nXWayland applications are not supported yet.\n\nTested on GNOME 50.",
+    "shell-version": [
+        "50"
+    ],
+    "settings-schema": "org.gnome.shell.extensions.osk-fix",
+    "url": "https://github.com/houssemko/osk-fix"
+}
