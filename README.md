@@ -9,7 +9,9 @@ A GNOME Shell extension that forces the native on-screen keyboard (OSK) to appea
 
 ### Drag and drop (recommended)
 
-Download the release zip and drag it onto [extensions.gnome.org/upload](https://extensions.gnome.org/upload/) (or run `gnome-extensions install` on it).
+1. Download the release zip and extract it.
+2. Drag the `osk-fix@houssemko.github.io` folder into `~/.local/share/gnome-shell/extensions/`.
+3. Log out and back in, then enable it with `gnome-extensions enable osk-fix@houssemko.github.io` (or Extensions app → OSK Fix → on).
 
 - **Release 1.0:** [osk-fix@houssemko.github.io.v1.0.shell-extension.zip](https://github.com/houssemko/osk-fix/releases/download/1.0/osk-fix%40houssemko.github.io.v1.0.shell-extension.zip)
 
