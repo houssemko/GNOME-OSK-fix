@@ -11,8 +11,6 @@ import {
 
 const RECENT_CLICK_WINDOW_MS = 500;
 
-const logError = (e, msg) => console.error(msg, e);
-
 export default class OskFixExtension extends Extension {
     enable() {
         this._pollId = 0;
@@ -33,10 +31,8 @@ export default class OskFixExtension extends Extension {
 
         const keyboard = Main.keyboard;
 
-        if (!keyboard) {
-            console.error('[osk-fix] Main.keyboard not available at enable, aborting');
+        if (!keyboard)
             return;
-        }
 
         this._settings = this.getSettings();
         this._a11y = new Gio.Settings({ schema_id: 'org.gnome.desktop.a11y.applications' });
@@ -56,14 +52,8 @@ export default class OskFixExtension extends Extension {
                 return;
             }
 
-            if (Date.now() - this._lastOskPressTime < RECENT_CLICK_WINDOW_MS) {
-                /* A press inside the OSK that resulted in it closing can only be
-                 * the hide button: regular keys never close the OSK.
-                 * ponytail: press-close window races the hide animation
-                 * (KEYBOARD_REST_TIME ~2× animation); 500ms window covers it.
-                 */
+            if (Date.now() - this._lastOskPressTime < RECENT_CLICK_WINDOW_MS)
                 this._userHidden = true;
-            }
         });
 
         this._capturedEventHandlerId = global.stage.connect(
@@ -129,9 +119,6 @@ export default class OskFixExtension extends Extension {
             this._originalLastDeviceIsTouchscreen = keyboard._lastDeviceIsTouchscreen;
             this._lastDeviceIsTouchscreenOverride = () => true;
             keyboard._lastDeviceIsTouchscreen = this._lastDeviceIsTouchscreenOverride;
-        } else {
-            console.debug('[osk-fix] _lastDeviceIsTouchscreen not found on Main.keyboard; ' +
-                'force-touch patch skipped for this GNOME Shell version.');
         }
 
         const keyboardPrototype = Object.getPrototypeOf(keyboard);
@@ -158,8 +145,6 @@ export default class OskFixExtension extends Extension {
                     };
                 }
             );
-        } else {
-            console.error('[osk-fix] Could not find an "open" method to override on the keyboard.');
         }
     }
 
@@ -185,9 +170,7 @@ export default class OskFixExtension extends Extension {
 
             this._lastPointerPressTime = Date.now();
             this._userHidden = false;
-        } catch (e) {
-            logError(e, '[osk-fix] Error in captured event handler');
-        }
+        } catch (e) {}
     }
 
     _oskAvailable() {
@@ -197,9 +180,7 @@ export default class OskFixExtension extends Extension {
     _safePoll() {
         try {
             this._poll();
-        } catch (e) {
-            logError(e, '[osk-fix] Exception during poll cycle');
-        }
+        } catch (e) {}
     }
 
     _poll() {
@@ -213,7 +194,6 @@ export default class OskFixExtension extends Extension {
             try {
                 hasFocus = !!focus.is_focused();
             } catch (e) {
-                logError(e, '[osk-fix] Error checking focus state');
                 hasFocus = !!focus;
             }
         }
@@ -247,7 +227,7 @@ export default class OskFixExtension extends Extension {
         } else if (!hasFocus && visible) {
             this._closingProgrammatically = true;
             keyboard.close();
-             this._prevInputFocus = focus;
+            this._prevInputFocus = focus;
         }
     }
 }
