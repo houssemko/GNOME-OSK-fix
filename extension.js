@@ -23,7 +23,7 @@ export default class OskFixExtension extends Extension {
         this._lastDeviceIsTouchscreenOverride = null;
 
         this._userHidden = false;
-        this._hideButtonPressed = false;
+        this._lastOskPressTime = 0;
         this._lastPointerPressTime = 0;
         this._prevVisible = false;
         this._prevInputFocus = null;
@@ -56,9 +56,13 @@ export default class OskFixExtension extends Extension {
                 return;
             }
 
-            if (this._hideButtonPressed) {
+            if (Date.now() - this._lastOskPressTime < RECENT_CLICK_WINDOW_MS) {
+                /* A press inside the OSK that resulted in it closing can only be
+                 * the hide button: regular keys never close the OSK.
+                 * ponytail: press-close window races the hide animation
+                 * (KEYBOARD_REST_TIME ~2× animation); 500ms window covers it.
+                 */
                 this._userHidden = true;
-                this._hideButtonPressed = false;
             }
         });
 
@@ -146,7 +150,6 @@ export default class OskFixExtension extends Extension {
                     return function (...args) {
                         if (
                             extension._userHidden ||
-                            extension._hideButtonPressed ||
                             !extension._oskAvailable()
                         ) {
                             return undefined;
@@ -176,33 +179,15 @@ export default class OskFixExtension extends Extension {
             }
 
             if (pressOnOsk) {
-                const eventActor = global.stage.get_event_actor(event);
-                if (this._isHideButton(eventActor)) {
-                    this._hideButtonPressed = true;
-                    this._userHidden = true;
-                }
+                this._lastOskPressTime = Date.now();
                 return;
             }
 
             this._lastPointerPressTime = Date.now();
             this._userHidden = false;
-            this._hideButtonPressed = false;
         } catch (e) {
             logError(e, '[osk-fix] Error in captured event handler');
         }
-    }
-
-    _isHideButton(actor) {
-        for (let cur = actor;
-             cur;
-             cur = typeof cur.get_parent === 'function' ? cur.get_parent() : null) {
-            const styleClass = cur.style_class ||
-                (typeof cur.get_style_class_name === 'function' ? cur.get_style_class_name() : '');
-            if (typeof styleClass === 'string' &&
-                (styleClass.includes('hide-key') || styleClass.includes('hide')))
-                return true;
-        }
-        return false;
     }
 
     _oskAvailable() {
@@ -256,7 +241,7 @@ export default class OskFixExtension extends Extension {
                 Date.now() - this._lastPointerPressTime < RECENT_CLICK_WINDOW_MS;
 
             if (!visible && !requested && (isNewFocus || recentClick) &&
-                !this._userHidden && !this._hideButtonPressed) {
+                !this._userHidden) {
                 keyboard.open(Main.layoutManager.focusIndex);
             }
         } else if (!hasFocus && visible) {
