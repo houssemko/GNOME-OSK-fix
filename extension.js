@@ -176,7 +176,8 @@ export default class OskFixExtension extends Extension {
             }
 
             if (pressOnOsk) {
-                if (this._isHideButton(actor)) {
+                const eventActor = global.stage.get_event_actor(event);
+                if (this._isHideButton(eventActor)) {
                     this._hideButtonPressed = true;
                     this._userHidden = true;
                 }
