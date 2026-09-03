@@ -9,5 +9,32 @@
                 active before the extension forced it on.
             </description>
         </key>
+        <key name="native-capable-apps" type="as">
+            <default>[]</default>
+            <summary>Apps observed opening the keyboard natively</summary>
+            <description>
+                Application IDs seen summoning the on-screen keyboard
+                through the native stack. Forced opens are skipped for
+                these. Managed automatically; inspect with gsettings.
+            </description>
+        </key>
+        <key name="click-only-apps" type="as">
+            <default>[]</default>
+            <summary>Apps restricted to click-driven opens</summary>
+            <description>
+                Application IDs whose focus changes are usually preceded
+                by a pointer press. Bare focus changes do not open the
+                keyboard for these. Managed automatically.
+            </description>
+        </key>
+        <key name="force-immediate-apps" type="as">
+            <default>[]</default>
+            <summary>Apps forced open without the fallback wait</summary>
+            <description>
+                Application IDs proven to lack native keyboard support
+                over several focus episodes. Bare focus changes open the
+                keyboard at once for these. Managed automatically.
+            </description>
+        </key>
     </schema>
 </schemalist>
