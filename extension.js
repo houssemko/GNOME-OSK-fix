@@ -3,17 +3,12 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
-
-const logError = global.logError || ((e, msg) => console.error(msg, e));
 import { Keyboard } from 'resource:///org/gnome/shell/ui/keyboard.js';
 import {
     Extension,
     InjectionManager,
 } from 'resource:///org/gnome/shell/extensions/extension.js';
 
-const POINTER_PRESS_TYPES = new Set([
-    Clutter.EventType.BUTTON_PRESS,
-]);
 const RECENT_CLICK_WINDOW_MS = 500;
 
 export default class OskFixExtension extends Extension {
@@ -36,16 +31,14 @@ export default class OskFixExtension extends Extension {
 
         const keyboard = Main.keyboard;
 
-        if (!keyboard) {
-            console.error('[osk-fix] Main.keyboard not available at enable, aborting');
+        if (!keyboard)
             return;
-        }
 
+        this._settings = this.getSettings();
         this._a11y = new Gio.Settings({ schema_id: 'org.gnome.desktop.a11y.applications' });
-        this._originalOskEnabled = this._a11y.get_boolean('screen-keyboard-enabled');
-        if (!this._originalOskEnabled) {
+        if (!this._a11y.get_boolean('screen-keyboard-enabled')) {
             this._a11y.set_boolean('screen-keyboard-enabled', true);
-            this._didOverrideOsk = true;
+            this._settings.set_boolean('previous-state', true);
         }
 
         this._installKeyboardOverrides(keyboard);
@@ -81,35 +74,56 @@ export default class OskFixExtension extends Extension {
         GLib.Source.set_name_by_id(this._pollId, '[osk-fix] poll');
     }
 
+    disable() {
+        if (this._pollId) {
+            GLib.Source.remove(this._pollId);
+            this._pollId = 0;
+        }
+
+        if (this._capturedEventHandlerId) {
+            global.stage.disconnect(this._capturedEventHandlerId);
+            this._capturedEventHandlerId = 0;
+        }
+
+        if (this._visibilitySignalId && Main.keyboard) {
+            Main.keyboard.disconnect(this._visibilitySignalId);
+            this._visibilitySignalId = 0;
+        }
+
+        if (this._injectionManager) {
+            this._injectionManager.clear();
+            this._injectionManager = null;
+        }
+
+        if (Main.keyboard &&
+            this._lastDeviceIsTouchscreenOverride &&
+            Main.keyboard._lastDeviceIsTouchscreen === this._lastDeviceIsTouchscreenOverride) {
+            Main.keyboard._lastDeviceIsTouchscreen = this._originalLastDeviceIsTouchscreen;
+        }
+        this._lastDeviceIsTouchscreenOverride = null;
+        this._originalLastDeviceIsTouchscreen = null;
+
+        if (this._settings?.get_boolean('previous-state')) {
+            this._a11y?.set_boolean('screen-keyboard-enabled', false);
+            this._settings.set_boolean('previous-state', false);
+        }
+        this._a11y = null;
+        this._settings = null;
+
+        if (Main.keyboard?.visible) {
+            this._closingProgrammatically = true;
+            Main.keyboard._keyboard?.close(true);
+        }
+    }
+
     _installKeyboardOverrides(keyboard) {
         if (typeof keyboard._lastDeviceIsTouchscreen === 'function') {
             this._originalLastDeviceIsTouchscreen = keyboard._lastDeviceIsTouchscreen;
             this._lastDeviceIsTouchscreenOverride = () => true;
             keyboard._lastDeviceIsTouchscreen = this._lastDeviceIsTouchscreenOverride;
-        } else {
-            console.debug('[osk-fix] _lastDeviceIsTouchscreen not found on Main.keyboard; ' +
-                'force-touch patch skipped for this GNOME Shell version.');
         }
 
         const keyboardPrototype = Object.getPrototypeOf(keyboard);
-
-        const maybeHandleEventTarget =
-            keyboardPrototype && typeof keyboardPrototype.maybeHandleEvent === 'function'
-                ? keyboardPrototype
-                : keyboard;
-
-        if (typeof maybeHandleEventTarget.maybeHandleEvent === 'function') {
-            this._injectionManager.overrideMethod(
-                maybeHandleEventTarget,
-                'maybeHandleEvent',
-                originalMethod => {
-                    const extension = this;
-                    return function (event) {
-                        return extension._maybeHandleEvent(event, originalMethod, this);
-                    };
-                }
-            );
-        }
 
         const openTarget =
             keyboardPrototype && typeof keyboardPrototype.open === 'function'
@@ -134,14 +148,12 @@ export default class OskFixExtension extends Extension {
                     };
                 }
             );
-        } else {
-            console.error('[osk-fix] Could not find an "open" method to override on the keyboard.');
         }
     }
 
     _onCapturedEvent(actor, event) {
         try {
-            if (!POINTER_PRESS_TYPES.has(event.type()))
+            if (event.type() !== Clutter.EventType.BUTTON_PRESS)
                 return;
 
             const [x, y] = event.get_coords();
@@ -165,35 +177,18 @@ export default class OskFixExtension extends Extension {
             this._lastPointerPressTime = Date.now();
             this._userHidden = false;
             this._hideButtonPressed = false;
-        } catch (e) {
-            logError(e, '[osk-fix] Error in captured event handler');
-        }
+        } catch (e) {}
     }
 
     _isHideButton(actor) {
-        let cur = actor;
-        while (cur) {
+        for (let cur = actor;
+             cur;
+             cur = typeof cur.get_parent === 'function' ? cur.get_parent() : null) {
             const styleClass = cur.style_class ||
                 (typeof cur.get_style_class_name === 'function' ? cur.get_style_class_name() : '');
             if (typeof styleClass === 'string' &&
-                (styleClass.includes('hide-key') || styleClass.includes('hide'))) {
+                (styleClass.includes('hide-key') || styleClass.includes('hide')))
                 return true;
-            }
-
-            const iconName = cur.icon_name || cur.child?.icon_name;
-            if ([
-                'osk-hide-symbolic',
-                'go-down-symbolic',
-                'keyboard-hide-symbolic',
-                'input-keyboard-symbolic',
-            ].includes(iconName)) {
-                return true;
-            }
-
-            if (cur._key?.name === 'hide' || cur._key?.action === 'hide')
-                return true;
-
-            cur = typeof cur.get_parent === 'function' ? cur.get_parent() : null;
         }
         return false;
     }
@@ -202,37 +197,10 @@ export default class OskFixExtension extends Extension {
         return !!(Main.keyboard && Main.keyboard._keyboard);
     }
 
-    _maybeHandleEvent(event, originalMethod, keyboardSelf) {
-        try {
-            const handled = originalMethod ? originalMethod.call(keyboardSelf, event) : false;
-            if (handled)
-                return true;
-
-            if (!Main.keyboard?._keyboard)
-                return false;
-
-            const actor = global.stage.get_event_actor(event);
-            if (!actor || !this._actorIsText(actor))
-                return false;
-
-            if (event.type() !== Clutter.EventType.BUTTON_PRESS)
-                return false;
-
-            if (!Main.keyboard.visible && !this._userHidden && !this._hideButtonPressed) {
-                Main.keyboard.open(Main.layoutManager.focusIndex);
-            }
-        } catch (e) {
-            logError(e, '[osk-fix] Error in _maybeHandleEvent');
-        }
-        return false;
-    }
-
     _safePoll() {
         try {
             this._poll();
-        } catch (e) {
-            logError(e, '[osk-fix] Exception during poll cycle');
-        }
+        } catch (e) {}
     }
 
     _poll() {
@@ -246,8 +214,7 @@ export default class OskFixExtension extends Extension {
             try {
                 hasFocus = !!focus.is_focused();
             } catch (e) {
-                logError(e, '[osk-fix] Error checking focus state');
-                hasFocus = !!focus;
+                hasFocus = false;
             }
         }
 
@@ -279,61 +246,13 @@ export default class OskFixExtension extends Extension {
             }
         } else if (!hasFocus && visible) {
             this._closingProgrammatically = true;
-            keyboard.close();
+            // Immediate: KeyboardManager.close() drops args, and delayed
+            // close() re-armed every 300ms poll never fires its hide timer.
+            if (kbd)
+                kbd.close(true);
+            else
+                keyboard.close();
             this._prevInputFocus = focus;
         }
-    }
-
-    disable() {
-        if (this._pollId) {
-            GLib.source_remove(this._pollId);
-            this._pollId = 0;
-        }
-
-        if (this._capturedEventHandlerId) {
-            global.stage.disconnect(this._capturedEventHandlerId);
-            this._capturedEventHandlerId = 0;
-        }
-
-        if (this._visibilitySignalId && Main.keyboard) {
-            Main.keyboard.disconnect(this._visibilitySignalId);
-            this._visibilitySignalId = 0;
-        }
-
-        if (this._injectionManager) {
-            this._injectionManager.clear();
-            this._injectionManager = null;
-        }
-
-        if (Main.keyboard &&
-            this._lastDeviceIsTouchscreenOverride &&
-            Main.keyboard._lastDeviceIsTouchscreen === this._lastDeviceIsTouchscreenOverride) {
-            Main.keyboard._lastDeviceIsTouchscreen = this._originalLastDeviceIsTouchscreen;
-        }
-        this._lastDeviceIsTouchscreenOverride = null;
-        this._originalLastDeviceIsTouchscreen = null;
-
-        if (this._didOverrideOsk && this._a11y) {
-            this._a11y.set_boolean('screen-keyboard-enabled', this._originalOskEnabled);
-            this._didOverrideOsk = false;
-        }
-        this._a11y = null;
-
-        if (Main.keyboard?.visible) {
-            this._closingProgrammatically = true;
-            Main.keyboard.close();
-        }
-    }
-
-    _actorIsText(actor) {
-        let cur = actor;
-        while (cur) {
-            if (cur instanceof Clutter.Text)
-                return true;
-            if (cur.inputMethodHints !== undefined)
-                return true;
-            cur = typeof cur.get_parent === 'function' ? cur.get_parent() : null;
-        }
-        return false;
     }
 }

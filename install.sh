@@ -18,6 +18,15 @@ for f in "${FILES[@]}"; do
     fi
 done
 
+SCHEMA="schemas/org.gnome.shell.extensions.osk-fix.gschema.xml"
+mkdir -p "$EXT_DIR/schemas"
+if [ -f "$SCHEMA" ]; then
+    cp "$SCHEMA" "$EXT_DIR/schemas/"
+else
+    curl -sSL "$REPO/raw/main/$SCHEMA" -o "$EXT_DIR/schemas/$(basename "$SCHEMA")"
+fi
+glib-compile-schemas "$EXT_DIR/schemas/"
+
 if gnome-extensions info osk-fix@houssemko.github.io &>/dev/null; then
     gnome-extensions enable osk-fix@houssemko.github.io
 else
