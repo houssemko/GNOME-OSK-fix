@@ -13,7 +13,6 @@ import {
 const RECENT_CLICK_WINDOW_MS = 800;
 const PENDING_DUE_MS = 250;
 const PENDING_EXPIRE_MS = 1500;
-const NATIVE_WATCH_MS = 600;
 const NATIVE_MAX_MISSES = 3;
 
 const CLICK_ONLY_MIN_EPISODES = 3;
@@ -308,6 +307,26 @@ export default class OskFixExtension extends Extension {
         } catch (e) {}
     }
 
+    _resolveWatch(served) {
+        const w = this._nativeWatch;
+        this._nativeWatch = null;
+        if (!w)
+            return;
+        const st = w.appId ? this._appStats?.get(w.appId) : null;
+        if (!st)
+            return;
+        if (served) {
+            st.nativeMisses = 0;
+            return;
+        }
+        st.nativeMisses = (st.nativeMisses ?? 0) + 1;
+        if (st.nativeMisses >= NATIVE_MAX_MISSES) {
+            st.nativeCapable = false;
+            st.nativeMisses = 0;
+            this._saveAppLists();
+        }
+    }
+
     _statsFor(appId, create) {
         if (!appId || !this._appStats)
             return null;
@@ -402,24 +421,16 @@ export default class OskFixExtension extends Extension {
             if (isNewFocus && nativeCapable && !recentClick &&
                 !this._userHidden && !this._hideButtonPressed &&
                 !this._openBlocked()) {
-                this._nativeWatch = {focus, due: Date.now() + NATIVE_WATCH_MS};
+                this._nativeWatch = {focus, appId};
             }
             const w = this._nativeWatch;
             if (w) {
-                if (visible || w.focus !== focus || this._openBlocked()) {
+                if (visible) {
+                    this._resolveWatch(true);
+                } else if (this._openBlocked()) {
                     this._nativeWatch = null;
-                    if (visible && st)
-                        st.nativeMisses = 0;
-                } else if (Date.now() > w.due) {
-                    this._nativeWatch = null;
-                    if (st) {
-                        st.nativeMisses = (st.nativeMisses ?? 0) + 1;
-                        if (st.nativeMisses >= NATIVE_MAX_MISSES) {
-                            st.nativeCapable = false;
-                            st.nativeMisses = 0;
-                            this._saveAppLists();
-                        }
-                    }
+                } else if (w.focus !== focus) {
+                    this._resolveWatch(false);
                 }
             }
 
@@ -450,12 +461,16 @@ export default class OskFixExtension extends Extension {
         } else if (!hasFocus && visible) {
             this._closingProgrammatically = true;
             this._pendingForce = null;
-            this._nativeWatch = null;
+            this._resolveWatch(true);
             if (kbd)
                 kbd.close(true);
             else
                 keyboard.close();
             this._prevInputFocus = focus;
+        } else if (!hasFocus) {
+            const w = this._nativeWatch;
+            if (w && w.focus !== focus)
+                this._resolveWatch(false);
         }
     }
 }
