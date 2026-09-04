@@ -57,14 +57,7 @@ export default class OskFixExtension extends Extension {
                 this._settings.set_boolean('previous-state', true);
             }
         } catch (e) {}
-        try {
-            for (const id of this._settings.get_strv('native-capable-apps'))
-                this._statsFor(id, true).nativeCapable = true;
-            for (const id of this._settings.get_strv('click-only-apps'))
-                this._statsFor(id, true).clickOnly = true;
-            for (const id of this._settings.get_strv('force-immediate-apps'))
-                this._statsFor(id, true).provenForeign = true;
-        } catch (e) {}
+        this._loadLearnedState();
 
         this._installKeyboardOverrides(keyboard);
 
@@ -210,7 +203,7 @@ export default class OskFixExtension extends Extension {
         const st = this._statsFor(this._getAppId(), true);
         if (st && !st.nativeCapable) {
             st.nativeCapable = true;
-            this._saveAppLists();
+            this._saveLearnedState();
         }
     }
 
@@ -290,20 +283,75 @@ export default class OskFixExtension extends Extension {
         }
     }
 
-    _saveAppLists() {
+    _stateFile() {
+        const dir = GLib.getenv('OSK_FIX_STATE_DIR') ||
+            GLib.build_filenamev([GLib.get_user_data_dir(), 'osk-fix']);
+        return Gio.File.new_for_path(GLib.build_filenamev([dir, 'state.json']));
+    }
+
+    _loadLearnedState() {
         try {
-            const native = [], clickOnly = [], immediate = [];
+            const [ok, contents] = this._stateFile().load_contents(null);
+            if (ok) {
+                this._applyLearnedState(JSON.parse(new TextDecoder().decode(contents)));
+                return;
+            }
+        } catch (e) {}
+        this._migrateLearnedState();
+    }
+
+    _applyLearnedState(data) {
+        if (!data || typeof data !== 'object')
+            return;
+        const keys = [['native', 'nativeCapable'], ['clickOnly', 'clickOnly'], ['immediate', 'provenForeign']];
+        for (const [key, flag] of keys) {
+            if (!Array.isArray(data[key]))
+                continue;
+            for (const id of data[key]) {
+                if (typeof id !== 'string')
+                    continue;
+                const st = this._statsFor(id, true);
+                if (st)
+                    st[flag] = true;
+            }
+        }
+    }
+
+    _migrateLearnedState() {
+        let native, clickOnly, immediate;
+        try {
+            native = this._settings.get_strv('native-capable-apps');
+            clickOnly = this._settings.get_strv('click-only-apps');
+            immediate = this._settings.get_strv('force-immediate-apps');
+        } catch (e) {
+            return;
+        }
+        try {
+            this._applyLearnedState({native, clickOnly, immediate});
+            this._saveLearnedState();
+            this._settings.set_strv('native-capable-apps', []);
+            this._settings.set_strv('click-only-apps', []);
+            this._settings.set_strv('force-immediate-apps', []);
+        } catch (e) {}
+    }
+
+    _saveLearnedState() {
+        try {
+            const data = {native: [], clickOnly: [], immediate: []};
             for (const [id, st] of this._appStats ?? []) {
                 if (st.nativeCapable)
-                    native.push(id);
+                    data.native.push(id);
                 if (st.clickOnly)
-                    clickOnly.push(id);
+                    data.clickOnly.push(id);
                 if (st.provenForeign)
-                    immediate.push(id);
+                    data.immediate.push(id);
             }
-            this._settings?.set_strv('native-capable-apps', native);
-            this._settings?.set_strv('click-only-apps', clickOnly);
-            this._settings?.set_strv('force-immediate-apps', immediate);
+            const file = this._stateFile();
+            try {
+                file.get_parent().make_directory_with_parents(null);
+            } catch (e) {}
+            const text = new TextEncoder().encode(JSON.stringify(data));
+            file.replace_contents(text, null, false, Gio.FileCreateFlags.REPLACE_DESTINATION, null);
         } catch (e) {}
     }
 
@@ -323,7 +371,7 @@ export default class OskFixExtension extends Extension {
         if (st.nativeMisses >= NATIVE_MAX_MISSES) {
             st.nativeCapable = false;
             st.nativeMisses = 0;
-            this._saveAppLists();
+            this._saveLearnedState();
         }
     }
 
@@ -352,10 +400,10 @@ export default class OskFixExtension extends Extension {
         const rate = total ? st.with / total : 0;
         if (!st.clickOnly && total >= CLICK_ONLY_MIN_EPISODES && rate >= CLICK_ONLY_ENTER_RATE) {
             st.clickOnly = true;
-            this._saveAppLists();
+            this._saveLearnedState();
         } else if (st.clickOnly && rate < CLICK_ONLY_EXIT_RATE) {
             st.clickOnly = false;
-            this._saveAppLists();
+            this._saveLearnedState();
         }
         return st.clickOnly;
     }
@@ -413,7 +461,7 @@ export default class OskFixExtension extends Extension {
             if (isNewFocus && st && !st.provenForeign && !st.nativeCapable &&
                 st.with + st.without >= FOREIGN_MIN_EPISODES) {
                 st.provenForeign = true;
-                this._saveAppLists();
+                this._saveLearnedState();
             }
             const nativeCapable = !!st?.nativeCapable;
             const provenForeign = !!st?.provenForeign;
