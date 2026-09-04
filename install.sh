@@ -3,7 +3,7 @@ set -euo pipefail
 
 EXT_DIR="$HOME/.local/share/gnome-shell/extensions/osk-fix@houssemko.github.io"
 REPO="https://github.com/houssemko/osk-fix"
-VERSION="1.4"
+VERSION="1.5"
 ZIP_URL="$REPO/releases/download/$VERSION/osk-fix%40houssemko.github.io.v$VERSION.shell-extension.zip"
 FILES=(extension.js metadata.json README.md LICENSE)
 SCHEMA_SRC="schemas/org.gnome.shell.extensions.osk-fix.gschema.xml"
@@ -23,7 +23,7 @@ else
         exit 1
     fi
     TMP_ZIP="$(mktemp --suffix=.zip)"
-    curl -sSL "$ZIP_URL" -o "$TMP_ZIP"
+    curl -fsSL "$ZIP_URL" -o "$TMP_ZIP"
     unzip -oq "$TMP_ZIP" -d "$HOME/.local/share/gnome-shell/extensions/"
     rm -f "$TMP_ZIP"
 fi

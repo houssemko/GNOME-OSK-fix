@@ -38,6 +38,7 @@ export default class OskFixExtension extends Extension {
         this._closingProgrammatically = false;
         this._viaManager = false;
         this._pendingForce = null;
+        this._pollFailed = false;
         this._learnedDirty = false;
         this._saveInFlight = false;
         this._appStats = new Map();
@@ -46,8 +47,10 @@ export default class OskFixExtension extends Extension {
 
         const keyboard = Main.keyboard;
 
-        if (!keyboard)
+        if (!keyboard) {
+            this._warn('no keyboard at enable, staying inert');
             return;
+        }
 
         this._settings = null;
         this._a11y = null;
@@ -506,7 +509,13 @@ export default class OskFixExtension extends Extension {
     _safePoll() {
         try {
             this._poll();
-        } catch (e) {}
+            this._pollFailed = false;
+        } catch (e) {
+            if (!this._pollFailed) {
+                this._pollFailed = true;
+                this._warn('poll failed:', e.message);
+            }
+        }
     }
 
     _poll() {
