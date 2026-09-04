@@ -285,7 +285,7 @@ export default class OskFixExtension extends Extension {
 
     _stateFile() {
         const dir = GLib.getenv('OSK_FIX_STATE_DIR') ||
-            GLib.build_filenamev([GLib.get_user_data_dir(), 'osk-fix']);
+            GLib.build_filenamev([GLib.get_user_state_dir(), 'osk-fix']);
         return Gio.File.new_for_path(GLib.build_filenamev([dir, 'state.json']));
     }
 
