@@ -5,6 +5,7 @@ EXT_DIR="$HOME/.local/share/gnome-shell/extensions/osk-fix@houssemko.github.io"
 REPO="https://github.com/houssemko/osk-fix"
 VERSION="1.5"
 ZIP_URL="$REPO/releases/download/$VERSION/osk-fix%40houssemko.github.io.v$VERSION.shell-extension.zip"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 FILES=(extension.js metadata.json README.md LICENSE)
 SCHEMA_SRC="schemas/org.gnome.shell.extensions.osk-fix.gschema.xml"
 
@@ -12,11 +13,11 @@ echo "Installing OSK Fix..."
 
 mkdir -p "$EXT_DIR/schemas"
 
-if [ -f "extension.js" ] && [ -f "$SCHEMA_SRC" ]; then
+if [ -f "$SCRIPT_DIR/extension.js" ] && [ -f "$SCRIPT_DIR/$SCHEMA_SRC" ]; then
     for f in "${FILES[@]}"; do
-        cp "$f" "$EXT_DIR/"
+        cp "$SCRIPT_DIR/$f" "$EXT_DIR/"
     done
-    cp "$SCHEMA_SRC" "$EXT_DIR/schemas/"
+    cp "$SCRIPT_DIR/$SCHEMA_SRC" "$EXT_DIR/schemas/"
 else
     if ! command -v unzip &>/dev/null; then
         echo "Error: unzip is required for installation." >&2
