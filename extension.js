@@ -11,9 +11,9 @@ import {
 } from 'resource:///org/gnome/shell/extensions/extension.js';
 
 const RECENT_CLICK_WINDOW_MS = 800;
+const APP_PRESS_WINDOW_MS = 3000;
 const PENDING_DUE_MS = 250;
 const PENDING_EXPIRE_MS = 1500;
-const NATIVE_MAX_MISSES = 3;
 
 const CLICK_ONLY_MIN_EPISODES = 3;
 const FOREIGN_MIN_EPISODES = 1;
@@ -33,11 +33,11 @@ export default class OskFixExtension extends Extension {
         this._userHidden = false;
         this._hideButtonPressed = false;
         this._lastPointerPressTime = 0;
+        this._lastAppPress = null;
         this._prevInputFocus = null;
         this._closingProgrammatically = false;
         this._viaManager = false;
         this._pendingForce = null;
-        this._nativeWatch = null;
         this._appStats = new Map();
 
         this._injectionManager = new InjectionManager();
@@ -118,7 +118,7 @@ export default class OskFixExtension extends Extension {
             this._appStats = null;
         }
         this._pendingForce = null;
-        this._nativeWatch = null;
+        this._lastAppPress = null;
 
         if (Main.keyboard &&
             this._lastDeviceIsTouchscreenOverride &&
@@ -201,9 +201,18 @@ export default class OskFixExtension extends Extension {
                 return;
         } catch (e) {}
         const st = this._statsFor(this._getAppId(), true);
-        if (st && !st.nativeCapable) {
-            st.nativeCapable = true;
-            this._saveLearnedState();
+        if (st) {
+            let changed = false;
+            if (!st.nativeCapable) {
+                st.nativeCapable = true;
+                changed = true;
+            }
+            if (st.provenForeign) {
+                st.provenForeign = false;
+                changed = true;
+            }
+            if (changed)
+                this._saveLearnedState();
         }
     }
 
@@ -250,10 +259,37 @@ export default class OskFixExtension extends Extension {
                 return;
             }
 
-            this._lastPointerPressTime = Date.now();
             this._userHidden = false;
             this._hideButtonPressed = false;
+            let onChrome = false;
+            try {
+                const target = global.stage.get_event_actor(event);
+                onChrome = !!Main.layoutManager.uiGroup?.contains(target);
+            } catch (e) {}
+            if (!onChrome) {
+                this._lastPointerPressTime = Date.now();
+                const pressApp = this._pressAppId(event);
+                if (pressApp)
+                    this._lastAppPress = {appId: pressApp, time: Date.now()};
+            }
         } catch (e) {}
+    }
+
+    _pressAppId(event) {
+        try {
+            const target = global.stage.get_event_actor(event);
+            let cur = target;
+            while (cur) {
+                const win = cur.meta_window ||
+                    (typeof cur.get_meta_window === 'function' ? cur.get_meta_window() : null);
+                if (win) {
+                    const app = Shell.WindowTracker.get_default().get_window_app(win);
+                    return app?.get_id() ?? null;
+                }
+                cur = typeof cur.get_parent === 'function' ? cur.get_parent() : null;
+            }
+        } catch (e) {}
+        return null;
     }
 
     _isHideButton(actor) {
@@ -291,13 +327,20 @@ export default class OskFixExtension extends Extension {
 
     _loadLearnedState() {
         try {
-            const [ok, contents] = this._stateFile().load_contents(null);
-            if (ok) {
-                this._applyLearnedState(JSON.parse(new TextDecoder().decode(contents)));
-                return;
-            }
-        } catch (e) {}
-        this._migrateLearnedState();
+            this._stateFile().load_contents_async(null, (file, res) => {
+                try {
+                    const [ok, contents] = file.load_contents_finish(res);
+                    if (ok) {
+                        this._applyLearnedState(JSON.parse(new TextDecoder().decode(contents)));
+                        this._saveLearnedState();
+                        return;
+                    }
+                } catch (e) {}
+                this._migrateLearnedState();
+            });
+        } catch (e) {
+            this._migrateLearnedState();
+        }
     }
 
     _applyLearnedState(data) {
@@ -311,10 +354,24 @@ export default class OskFixExtension extends Extension {
                 if (typeof id !== 'string')
                     continue;
                 const st = this._statsFor(id, true);
-                if (st)
-                    st[flag] = true;
+                if (!st)
+                    continue;
+                st[flag] = true;
+                if (flag === 'clickOnly' && st.with + st.without < CLICK_ONLY_MIN_EPISODES) {
+                    st.with = CLICK_ONLY_MIN_EPISODES - 1;
+                    st.without = 0;
+                }
             }
         }
+        let fixed = false;
+        for (const [, st] of this._appStats ?? []) {
+            if ((st.nativeCapable || st.clickOnly) && st.provenForeign) {
+                st.provenForeign = false;
+                fixed = true;
+            }
+        }
+        if (fixed)
+            this._saveLearnedState();
     }
 
     _migrateLearnedState() {
@@ -336,8 +393,9 @@ export default class OskFixExtension extends Extension {
     }
 
     _saveLearnedState() {
+        let data;
         try {
-            const data = {native: [], clickOnly: [], immediate: []};
+            data = {native: [], clickOnly: [], immediate: []};
             for (const [id, st] of this._appStats ?? []) {
                 if (st.nativeCapable)
                     data.native.push(id);
@@ -346,33 +404,25 @@ export default class OskFixExtension extends Extension {
                 if (st.provenForeign)
                     data.immediate.push(id);
             }
+        } catch (e) {
+            return;
+        }
+        try {
             const file = this._stateFile();
-            try {
-                file.get_parent().make_directory_with_parents(null);
-            } catch (e) {}
             const text = new TextEncoder().encode(JSON.stringify(data));
-            file.replace_contents(text, null, false, Gio.FileCreateFlags.REPLACE_DESTINATION, null);
+            file.get_parent().make_directory_async(GLib.PRIORITY_DEFAULT, null, (dir, res) => {
+                try {
+                    dir.make_directory_finish(res);
+                } catch (e) {}
+                try {
+                    file.replace_contents_async(text, null, false, Gio.FileCreateFlags.REPLACE_DESTINATION, null, (f, r) => {
+                        try {
+                            f.replace_contents_finish(r);
+                        } catch (e) {}
+                    });
+                } catch (e) {}
+            });
         } catch (e) {}
-    }
-
-    _resolveWatch(served) {
-        const w = this._nativeWatch;
-        this._nativeWatch = null;
-        if (!w)
-            return;
-        const st = w.appId ? this._appStats?.get(w.appId) : null;
-        if (!st)
-            return;
-        if (served) {
-            st.nativeMisses = 0;
-            return;
-        }
-        st.nativeMisses = (st.nativeMisses ?? 0) + 1;
-        if (st.nativeMisses >= NATIVE_MAX_MISSES) {
-            st.nativeCapable = false;
-            st.nativeMisses = 0;
-            this._saveLearnedState();
-        }
     }
 
     _statsFor(appId, create) {
@@ -382,7 +432,7 @@ export default class OskFixExtension extends Extension {
         if (!st && create) {
             if (this._appStats.size >= MAX_TRACKED_APPS)
                 this._appStats.delete(this._appStats.keys().next().value);
-            st = {with: 0, without: 0, clickOnly: false, nativeCapable: false, nativeMisses: 0, provenForeign: false};
+            st = {with: 0, without: 0, clickOnly: false, nativeCapable: false, provenForeign: false};
             this._appStats.set(appId, st);
         }
         return st ?? null;
@@ -400,6 +450,7 @@ export default class OskFixExtension extends Extension {
         const rate = total ? st.with / total : 0;
         if (!st.clickOnly && total >= CLICK_ONLY_MIN_EPISODES && rate >= CLICK_ONLY_ENTER_RATE) {
             st.clickOnly = true;
+            st.provenForeign = false;
             this._saveLearnedState();
         } else if (st.clickOnly && rate < CLICK_ONLY_EXIT_RATE) {
             st.clickOnly = false;
@@ -449,11 +500,15 @@ export default class OskFixExtension extends Extension {
                 Date.now() - this._lastPointerPressTime < RECENT_CLICK_WINDOW_MS;
 
             const appId = this._getAppId();
+            const tappedApp = !!appId && !!this._lastAppPress &&
+                this._lastAppPress.appId === appId &&
+                Date.now() - this._lastAppPress.time < APP_PRESS_WINDOW_MS;
+            const tapped = recentClick || tappedApp;
             const isNewFocus = !this._prevInputFocus;
             let openOnFocus = isNewFocus;
             if (isNewFocus) {
                 this._prevInputFocus = focus;
-                if (this._updateAppStats(appId, recentClick))
+                if (this._updateAppStats(appId, tapped))
                     openOnFocus = false;
                 this._pendingForce = null;
             }
@@ -466,29 +521,13 @@ export default class OskFixExtension extends Extension {
             const nativeCapable = !!st?.nativeCapable;
             const provenForeign = !!st?.provenForeign;
 
-            if (isNewFocus && nativeCapable && !recentClick &&
-                !this._userHidden && !this._hideButtonPressed &&
-                !this._openBlocked()) {
-                this._nativeWatch = {focus, appId};
-            }
-            const w = this._nativeWatch;
-            if (w) {
-                if (visible) {
-                    this._resolveWatch(true);
-                } else if (this._openBlocked()) {
-                    this._nativeWatch = null;
-                } else if (w.focus !== focus) {
-                    this._resolveWatch(false);
-                }
-            }
-
             const p = this._pendingForce;
             if (p && (p.focus !== focus || Date.now() > p.expires))
                 this._pendingForce = null;
 
             if (!visible && !requested &&
                 !this._userHidden && !this._hideButtonPressed) {
-                if (recentClick) {
+                if (tapped) {
                     this._pendingForce = null;
                     keyboard.open(Main.layoutManager.focusIndex);
                 } else if (openOnFocus && !nativeCapable) {
@@ -509,16 +548,11 @@ export default class OskFixExtension extends Extension {
         } else if (!hasFocus && visible) {
             this._closingProgrammatically = true;
             this._pendingForce = null;
-            this._resolveWatch(true);
             if (kbd)
                 kbd.close(true);
             else
                 keyboard.close();
             this._prevInputFocus = focus;
-        } else if (!hasFocus) {
-            const w = this._nativeWatch;
-            if (w && w.focus !== focus)
-                this._resolveWatch(false);
         }
     }
 }
