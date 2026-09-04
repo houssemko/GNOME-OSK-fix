@@ -38,6 +38,8 @@ export default class OskFixExtension extends Extension {
         this._closingProgrammatically = false;
         this._viaManager = false;
         this._pendingForce = null;
+        this._learnedDirty = false;
+        this._saveInFlight = false;
         this._appStats = new Map();
 
         this._injectionManager = new InjectionManager();
@@ -56,7 +58,9 @@ export default class OskFixExtension extends Extension {
                 this._a11y.set_boolean('screen-keyboard-enabled', true);
                 this._settings.set_boolean('previous-state', true);
             }
-        } catch (e) {}
+        } catch (e) {
+            this._warn('settings init failed, running unpersisted:', e.message);
+        }
         this._loadLearnedState();
 
         this._installKeyboardOverrides(keyboard);
@@ -118,6 +122,8 @@ export default class OskFixExtension extends Extension {
             this._appStats = null;
         }
         this._pendingForce = null;
+        this._learnedDirty = false;
+        this._saveInFlight = false;
         this._lastAppPress = null;
 
         if (Main.keyboard &&
@@ -150,10 +156,7 @@ export default class OskFixExtension extends Extension {
 
         const keyboardPrototype = Object.getPrototypeOf(keyboard);
 
-        const openTarget =
-            keyboardPrototype && typeof keyboardPrototype.open === 'function'
-                ? keyboardPrototype
-                : (typeof keyboard.open === 'function' ? keyboard : Keyboard?.prototype);
+        const openTarget = keyboardPrototype;
 
         const extension = this;
         const makeManagerOpener = originalMethod => {
@@ -381,6 +384,7 @@ export default class OskFixExtension extends Extension {
             clickOnly = this._settings.get_strv('click-only-apps');
             immediate = this._settings.get_strv('force-immediate-apps');
         } catch (e) {
+            this._warn('legacy state unreadable, starting fresh:', e.message);
             return;
         }
         try {
@@ -389,14 +393,34 @@ export default class OskFixExtension extends Extension {
             this._settings.set_strv('native-capable-apps', []);
             this._settings.set_strv('click-only-apps', []);
             this._settings.set_strv('force-immediate-apps', []);
+        } catch (e) {
+            this._warn('legacy state migration failed:', e.message);
+        }
+    }
+
+    _warn(...args) {
+        try {
+            console.error('[osk-fix]', ...args);
         } catch (e) {}
     }
 
     _saveLearnedState() {
+        this._learnedDirty = true;
+        if (this._saveInFlight)
+            return;
+        this._flushLearnedState();
+    }
+
+    _flushLearnedState() {
+        if (!this._appStats) {
+            this._learnedDirty = false;
+            this._saveInFlight = false;
+            return;
+        }
         let data;
         try {
             data = {native: [], clickOnly: [], immediate: []};
-            for (const [id, st] of this._appStats ?? []) {
+            for (const [id, st] of this._appStats) {
                 if (st.nativeCapable)
                     data.native.push(id);
                 if (st.clickOnly)
@@ -405,8 +429,13 @@ export default class OskFixExtension extends Extension {
                     data.immediate.push(id);
             }
         } catch (e) {
+            this._learnedDirty = false;
+            this._saveInFlight = false;
+            this._warn('state snapshot failed:', e.message);
             return;
         }
+        this._learnedDirty = false;
+        this._saveInFlight = true;
         try {
             const file = this._stateFile();
             const text = new TextEncoder().encode(JSON.stringify(data));
@@ -414,15 +443,30 @@ export default class OskFixExtension extends Extension {
                 try {
                     dir.make_directory_finish(res);
                 } catch (e) {}
+                if (!this._appStats) {
+                    this._saveInFlight = false;
+                    return;
+                }
                 try {
                     file.replace_contents_async(text, null, false, Gio.FileCreateFlags.REPLACE_DESTINATION, null, (f, r) => {
                         try {
                             f.replace_contents_finish(r);
-                        } catch (e) {}
+                        } catch (e) {
+                            this._warn('state write failed:', e.message);
+                        }
+                        this._saveInFlight = false;
+                        if (this._learnedDirty)
+                            this._flushLearnedState();
                     });
-                } catch (e) {}
+                } catch (e) {
+                    this._saveInFlight = false;
+                    this._warn('state write failed:', e.message);
+                }
             });
-        } catch (e) {}
+        } catch (e) {
+            this._saveInFlight = false;
+            this._warn('state write failed:', e.message);
+        }
     }
 
     _statsFor(appId, create) {
