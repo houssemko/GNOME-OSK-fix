@@ -32,6 +32,8 @@ export default class OskFixExtension extends Extension {
 
         this._userHidden = false;
         this._hideButtonPressed = false;
+        this._a11ySuspended = false;
+        this._a11yChangedId = 0;
         this._lastPointerPressTime = 0;
         this._lastAppPress = null;
         this._prevInputFocus = null;
@@ -67,6 +69,12 @@ export default class OskFixExtension extends Extension {
         this._loadLearnedState();
 
         this._installKeyboardOverrides(keyboard);
+
+        if (this._a11y) {
+            this._a11yChangedId = this._a11y.connect('changed::screen-keyboard-enabled', () => {
+                this._a11ySuspended = !this._a11y.get_boolean('screen-keyboard-enabled');
+            });
+        }
 
         this._visibilitySignalId = keyboard.connect('visibility-changed', () => {
             if (keyboard.visible)
@@ -113,6 +121,11 @@ export default class OskFixExtension extends Extension {
         if (this._visibilitySignalId && Main.keyboard) {
             Main.keyboard.disconnect(this._visibilitySignalId);
             this._visibilitySignalId = 0;
+        }
+
+        if (this._a11yChangedId && this._a11y) {
+            this._a11y.disconnect(this._a11yChangedId);
+            this._a11yChangedId = 0;
         }
 
         if (this._injectionManager) {
@@ -223,7 +236,7 @@ export default class OskFixExtension extends Extension {
     }
 
     _openBlocked() {
-        if (this._userHidden || this._hideButtonPressed || !this._oskAvailable())
+        if (this._userHidden || this._hideButtonPressed || this._a11ySuspended || !this._oskAvailable())
             return true;
         try {
             if (global.stage.key_focus instanceof Clutter.Text)
