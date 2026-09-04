@@ -14,11 +14,6 @@ const RECENT_CLICK_WINDOW_MS = 800;
 const APP_PRESS_WINDOW_MS = 3000;
 const PENDING_DUE_MS = 250;
 const PENDING_EXPIRE_MS = 1500;
-
-const CLICK_ONLY_MIN_EPISODES = 3;
-const FOREIGN_MIN_EPISODES = 1;
-const CLICK_ONLY_ENTER_RATE = 0.5;
-const CLICK_ONLY_EXIT_RATE = 0.3;
 const MAX_TRACKED_APPS = 50;
 
 export default class OskFixExtension extends Extension {
@@ -226,8 +221,8 @@ export default class OskFixExtension extends Extension {
                 st.nativeCapable = true;
                 changed = true;
             }
-            if (st.provenForeign) {
-                st.provenForeign = false;
+            if (st.forceOpen) {
+                st.forceOpen = false;
                 changed = true;
             }
             if (changed)
@@ -246,10 +241,6 @@ export default class OskFixExtension extends Extension {
             Date.now() - this._lastPointerPressTime < RECENT_CLICK_WINDOW_MS;
         if (recentPress)
             return false;
-        const appId = this._getAppId();
-        const st = appId ? this._appStats?.get(appId) : null;
-        if (st?.clickOnly)
-            return true;
         return false;
     }
 
@@ -365,7 +356,7 @@ export default class OskFixExtension extends Extension {
     _applyLearnedState(data) {
         if (!data || typeof data !== 'object')
             return;
-        const keys = [['native', 'nativeCapable'], ['clickOnly', 'clickOnly'], ['immediate', 'provenForeign']];
+        const keys = [['native', 'nativeCapable'], ['forceOpen', 'forceOpen']];
         for (const [key, flag] of keys) {
             if (!Array.isArray(data[key]))
                 continue;
@@ -373,19 +364,14 @@ export default class OskFixExtension extends Extension {
                 if (typeof id !== 'string')
                     continue;
                 const st = this._statsFor(id, true);
-                if (!st)
-                    continue;
-                st[flag] = true;
-                if (flag === 'clickOnly' && st.with + st.without < CLICK_ONLY_MIN_EPISODES) {
-                    st.with = CLICK_ONLY_MIN_EPISODES - 1;
-                    st.without = 0;
-                }
+                if (st && !st[flag])
+                    st[flag] = true;
             }
         }
         let fixed = false;
         for (const [, st] of this._appStats ?? []) {
-            if ((st.nativeCapable || st.clickOnly) && st.provenForeign) {
-                st.provenForeign = false;
+            if (st.nativeCapable && st.forceOpen) {
+                st.forceOpen = false;
                 fixed = true;
             }
         }
@@ -394,20 +380,18 @@ export default class OskFixExtension extends Extension {
     }
 
     _migrateLearnedState() {
-        let native, clickOnly, immediate;
+        let native, immediate;
         try {
             native = this._settings.get_strv('native-capable-apps');
-            clickOnly = this._settings.get_strv('click-only-apps');
             immediate = this._settings.get_strv('force-immediate-apps');
         } catch (e) {
             this._warn('legacy state unreadable, starting fresh:', e.message);
             return;
         }
         try {
-            this._applyLearnedState({native, clickOnly, immediate});
+            this._applyLearnedState({native, forceOpen: immediate});
             this._saveLearnedState();
             this._settings.set_strv('native-capable-apps', []);
-            this._settings.set_strv('click-only-apps', []);
             this._settings.set_strv('force-immediate-apps', []);
         } catch (e) {
             this._warn('legacy state migration failed:', e.message);
@@ -435,14 +419,12 @@ export default class OskFixExtension extends Extension {
         }
         let data;
         try {
-            data = {native: [], clickOnly: [], immediate: []};
+            data = {native: [], forceOpen: []};
             for (const [id, st] of this._appStats) {
                 if (st.nativeCapable)
                     data.native.push(id);
-                if (st.clickOnly)
-                    data.clickOnly.push(id);
-                if (st.provenForeign)
-                    data.immediate.push(id);
+                if (st.forceOpen)
+                    data.forceOpen.push(id);
             }
         } catch (e) {
             this._learnedDirty = false;
@@ -492,31 +474,10 @@ export default class OskFixExtension extends Extension {
         if (!st && create) {
             if (this._appStats.size >= MAX_TRACKED_APPS)
                 this._appStats.delete(this._appStats.keys().next().value);
-            st = {with: 0, without: 0, clickOnly: false, nativeCapable: false, provenForeign: false};
+            st = {nativeCapable: false, forceOpen: false};
             this._appStats.set(appId, st);
         }
         return st ?? null;
-    }
-
-    _updateAppStats(appId, withClick) {
-        const st = this._statsFor(appId, true);
-        if (!st)
-            return false;
-        if (withClick)
-            st.with++;
-        else
-            st.without++;
-        const total = st.with + st.without;
-        const rate = total ? st.with / total : 0;
-        if (!st.clickOnly && total >= CLICK_ONLY_MIN_EPISODES && rate >= CLICK_ONLY_ENTER_RATE) {
-            st.clickOnly = true;
-            st.provenForeign = false;
-            this._saveLearnedState();
-        } else if (st.clickOnly && rate < CLICK_ONLY_EXIT_RATE) {
-            st.clickOnly = false;
-            this._saveLearnedState();
-        }
-        return st.clickOnly;
     }
 
     _safePoll() {
@@ -571,21 +532,17 @@ export default class OskFixExtension extends Extension {
                 Date.now() - this._lastAppPress.time < APP_PRESS_WINDOW_MS;
             const tapped = recentClick || tappedApp;
             const isNewFocus = !this._prevInputFocus;
-            let openOnFocus = isNewFocus;
             if (isNewFocus) {
                 this._prevInputFocus = focus;
-                if (this._updateAppStats(appId, tapped))
-                    openOnFocus = false;
                 this._pendingForce = null;
             }
-            const st = appId ? this._appStats?.get(appId) : null;
-            if (isNewFocus && st && !st.provenForeign && !st.nativeCapable &&
-                st.with + st.without >= FOREIGN_MIN_EPISODES) {
-                st.provenForeign = true;
+            const st = appId ? this._statsFor(appId, true) : null;
+            if (isNewFocus && st && !st.forceOpen && !st.nativeCapable) {
+                st.forceOpen = true;
                 this._saveLearnedState();
             }
             const nativeCapable = !!st?.nativeCapable;
-            const provenForeign = !!st?.provenForeign;
+            const forceOpen = !!st?.forceOpen;
 
             const p = this._pendingForce;
             if (p && (p.focus !== focus || Date.now() > p.expires))
@@ -596,10 +553,10 @@ export default class OskFixExtension extends Extension {
                 if (tapped) {
                     this._pendingForce = null;
                     keyboard.open(Main.layoutManager.focusIndex);
-                } else if (openOnFocus && !nativeCapable) {
+                } else if (isNewFocus && !nativeCapable) {
                     const now = Date.now();
                     const pending = this._pendingForce;
-                    if (provenForeign ||
+                    if (forceOpen ||
                         (pending && pending.focus === focus && now >= pending.due)) {
                         this._pendingForce = null;
                         keyboard.open(Main.layoutManager.focusIndex);

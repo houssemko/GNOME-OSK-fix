@@ -15,7 +15,7 @@ Native Wayland apps work out of the box; the keyboard is forced in apps that don
 2. Drag the `osk-fix@houssemko.github.io` folder into `~/.local/share/gnome-shell/extensions/`.
 3. Log out and back in, then enable it with `gnome-extensions enable osk-fix@houssemko.github.io` (or Extensions app → OSK Fix → on).
 
-- **Release 1.7:** [osk-fix@houssemko.github.io.v1.7.shell-extension.zip](https://github.com/houssemko/osk-fix/releases/download/1.7/osk-fix%40houssemko.github.io.v1.7.shell-extension.zip)
+- **Release 1.8:** [osk-fix@houssemko.github.io.v1.8.shell-extension.zip](https://github.com/houssemko/osk-fix/releases/download/1.8/osk-fix%40houssemko.github.io.v1.8.shell-extension.zip)
 
 ### One-line install
 

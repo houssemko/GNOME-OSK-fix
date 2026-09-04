@@ -17,14 +17,6 @@
                 cleared. New learning is stored in state.json instead.
             </description>
         </key>
-        <key name="click-only-apps" type="as">
-            <default>[]</default>
-            <summary>Deprecated: migrated to the JSON state file</summary>
-            <description>
-                Read once to import pre-existing learned state, then
-                cleared. New learning is stored in state.json instead.
-            </description>
-        </key>
         <key name="force-immediate-apps" type="as">
             <default>[]</default>
             <summary>Deprecated: migrated to the JSON state file</summary>
