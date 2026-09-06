@@ -170,40 +170,36 @@ export default class OskFixExtension extends Extension {
         const openTarget = keyboardPrototype;
 
         const extension = this;
-        const makeManagerOpener = originalMethod => {
+        const makeOpener = isInner => originalMethod => {
             return function (...args) {
-                if (extension._openBlocked())
-                    return undefined;
-                extension._viaManager = true;
+                if (isInner) {
+                    const viaManager = extension._viaManager;
+                    extension._viaManager = false;
+                    if (!viaManager)
+                        extension._noteNativeOpen(args);
+                } else {
+                    extension._viaManager = true;
+                }
                 try {
+                    if (extension._openBlocked())
+                        return undefined;
                     return originalMethod.call(this, ...args);
                 } finally {
-                    extension._viaManager = false;
+                    if (!isInner)
+                        extension._viaManager = false;
                 }
-            };
-        };
-        const makeInnerOpener = originalMethod => {
-            return function (...args) {
-                const viaManager = extension._viaManager;
-                extension._viaManager = false;
-                if (!viaManager)
-                    extension._noteNativeOpen(args);
-                const blocked = extension._openBlocked();
-                if (blocked)
-                    return undefined;
-                return originalMethod.call(this, ...args);
             };
         };
 
         if (openTarget && typeof openTarget.open === 'function') {
             this._injectionManager.overrideMethod(
-                openTarget, 'open', makeManagerOpener);
+                openTarget, 'open', makeOpener(false));
         }
 
         if (Keyboard?.prototype && typeof Keyboard.prototype.open === 'function' &&
             Keyboard.prototype !== openTarget) {
             this._injectionManager.overrideMethod(
-                Keyboard.prototype, 'open', makeInnerOpener);
+                Keyboard.prototype, 'open', makeOpener(true));
         }
     }
 
@@ -292,10 +288,8 @@ export default class OskFixExtension extends Extension {
             while (cur) {
                 const win = cur.meta_window ||
                     (typeof cur.get_meta_window === 'function' ? cur.get_meta_window() : null);
-                if (win) {
-                    const app = Shell.WindowTracker.get_default().get_window_app(win);
-                    return app?.get_id() ?? null;
-                }
+                if (win)
+                    return this._appIdForWindow(win);
                 cur = typeof cur.get_parent === 'function' ? cur.get_parent() : null;
             }
         } catch (e) {}
@@ -321,7 +315,14 @@ export default class OskFixExtension extends Extension {
 
     _getAppId() {
         try {
-            const win = global.display?.focus_window;
+            return this._appIdForWindow(global.display?.focus_window);
+        } catch (e) {
+            return null;
+        }
+    }
+
+    _appIdForWindow(win) {
+        try {
             const app = win && Shell.WindowTracker.get_default().get_window_app(win);
             return app?.get_id() ?? null;
         } catch (e) {
@@ -340,17 +341,11 @@ export default class OskFixExtension extends Extension {
             this._stateFile().load_contents_async(null, (file, res) => {
                 try {
                     const [ok, contents] = file.load_contents_finish(res);
-                    if (ok) {
+                    if (ok)
                         this._applyLearnedState(JSON.parse(new TextDecoder().decode(contents)));
-                        this._saveLearnedState();
-                        return;
-                    }
                 } catch (e) {}
-                this._migrateLearnedState();
             });
-        } catch (e) {
-            this._migrateLearnedState();
-        }
+        } catch (e) {}
     }
 
     _applyLearnedState(data) {
@@ -377,25 +372,6 @@ export default class OskFixExtension extends Extension {
         }
         if (fixed)
             this._saveLearnedState();
-    }
-
-    _migrateLearnedState() {
-        let native, immediate;
-        try {
-            native = this._settings.get_strv('native-capable-apps');
-            immediate = this._settings.get_strv('force-immediate-apps');
-        } catch (e) {
-            this._warn('legacy state unreadable, starting fresh:', e.message);
-            return;
-        }
-        try {
-            this._applyLearnedState({native, forceOpen: immediate});
-            this._saveLearnedState();
-            this._settings.set_strv('native-capable-apps', []);
-            this._settings.set_strv('force-immediate-apps', []);
-        } catch (e) {
-            this._warn('legacy state migration failed:', e.message);
-        }
     }
 
     _warn(...args) {
